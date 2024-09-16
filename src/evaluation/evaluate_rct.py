@@ -5,10 +5,10 @@ import os
 
 def evaluate_rctness_merged(merged_files, annotations):
     rct_stats = {k:[] for k in ['SR', 'Precision', 'Recall']}
-    for base_name, merged_df in merged_files.items():
-        print(base_name)
-        if base_name in processed_annotations:
-            annotations_dict = processed_annotations[base_name]
+    for sr, merged_df in merged_files.items():
+        print("Computing RCT metrics for : ", sr)
+        if sr in processed_annotations:
+            annotations_dict = processed_annotations[sr]
             annotated_titles = [annotations_dict[paper]['Title'] for paper in annotations_dict]
             
             merged_unique_df = merged_df.drop_duplicates('id')
@@ -23,11 +23,11 @@ def evaluate_rctness_merged(merged_files, annotations):
             recall = inter/max(1, len(annotated_titles))
             print('Precision : ', precision)
             print('Recall : ', recall)
-            rct_stats['SR'].append(base_name)
+            rct_stats['SR'].append(sr)
             rct_stats['Precision'].append(precision)
             rct_stats['Recall'].append(recall)
         else:
-            print(f'WARNING : {base_name} not found in annotations.')
+            print(f'WARNING : {sr} not found in annotations.')
         print('-'*50)
     rct_stats['SR'].append('TOTAL')
     rct_stats['Precision'].append(sum(rct_stats['Precision'])/len(rct_stats['Precision']))
@@ -37,10 +37,10 @@ def evaluate_rctness_merged(merged_files, annotations):
 
 def evaluate_rctness_prior(rct_files, processed_annotations):
     rct_stats = {k:[] for k in ['SR', 'Precision', 'Recall']}
-    for base_name, rct_df in rct_files.items():
-        print(base_name)
-        if base_name in processed_annotations:
-            annotations_dict = processed_annotations[base_name]
+    for sr, rct_df in rct_files.items():
+        print(sr)
+        if sr in processed_annotations:
+            annotations_dict = processed_annotations[sr]
             annotated_citations = [annotations_dict[paper]['Citation'] for paper in annotations_dict]
             rct_df['id'] = get_ids(rct_df, 'rct')
             rct_unique_df = rct_df.drop_duplicates('id')
@@ -58,13 +58,13 @@ def evaluate_rctness_prior(rct_files, processed_annotations):
         
             precision = round(intersection/max(1, len(extracted_authors)),2)
             recall = round(intersection/max(1, len(annotated_citations)),2)
-            rct_stats['SR'].append(base_name)
+            rct_stats['SR'].append(sr)
             rct_stats['Precision'].append(precision)
             rct_stats['Recall'].append(recall)
             print('Precision : ', precision)
             print('Recall : ', recall)
         else:
-            print(f'WARNING : {base_name} not found in annotations.')
+            print(f'WARNING : {sr} not found in annotations.')
         print('-'*50)
     rct_stats['SR'].append('TOTAL')
     rct_stats['Precision'].append(sum(rct_stats['Precision'])/len(rct_stats['Precision']))
