@@ -3,32 +3,42 @@ from evaluate import *
 import argparse
 from dotenv import load_dotenv
 
+def get_unique_citations(citations_df):
+	""" Returns unique citations from a dataframe of extracted citations. """
+	citations_df['id'] = get_ids(citations_df, 'citations')
+	citations_unique_df = citations_df.drop_duplicates('id')
+	extracted_df = citations_unique_df[~citations_unique_df['Citation'].isna()]
+	unique_citations = extracted_df['Citation'].unique().tolist()
+	return unique_citations
 
-load_dotenv()
 
-def evaluate_citations(citations_files, annotations):
-	""" Function that evaluates citations based on the annotations. """
+def evaluate_citations(citations_df, annotations_df):
+	""" Function that evaluates citations based on the annotations for a given systematic review. """
+	annotated_citations = annotations_df[annotations_df['Field']=='Citation']['Answer'].tolist()
+	unique_citations = get_unique_citations(citations_df)
+	intersection = 0
+	extracted_authors = [name.lower().split(' ')[0].split('.')[0].split(',')[0] for name in unique_citations]
+	annotated_authors = [cit.lower().split(' ')[0].split('.')[0].split(',')[0] for cit in annotated_citations]
+	# Trying concurrently two matching techniques
+	intersection = len(set(extracted_authors).intersection(set(annotated_authors)))
+	inter = get_matches(unique_citations, annotated_citations, 20)
+	intersection = max(intersection, inter)
+	precision = round(intersection/len(unique_citations),2)
+	recall = round(intersection/len(annotated_citations),2)
+	return precision, recall
+	
+
+def evaluate_all_citations(citations_files, annotations):
+	""" Function that evaluates citations based on the annotations of all systematic reviews in a batch. """
 	output_path = f'scores/citations_eval_prior_{batch}.csv'
 	extracted = []
 
 	stats = {k:[] for k in ['SR', 'Precision', 'Recall']}
-	for base_name, citations_df in citations_files.items():
-	    if base_name in annotations:
-	        annotations_df = annotations[base_name]
-	        annotated_citations = annotations_df[annotations_df['Field']=='Citation']['Answer'].tolist()
-	        citations_df['id'] = get_ids(citations_df, 'citations')
-	        citations_unique_df = citations_df.drop_duplicates('id')
-	        extracted_df = citations_unique_df[~citations_unique_df['Citation'].isna()]
-	        extracted_citations = extracted_df['Citation'].unique().tolist()
-	        intersection = 0
-	        extracted_authors = [name.lower().split(' ')[0].split('.')[0].split(',')[0] for name in extracted_citations]
-	        annotated_authors = [cit.lower().split(' ')[0].split('.')[0].split(',')[0] for cit in annotated_citations]
-	        intersection = len(set(extracted_authors).intersection(set(annotated_authors)))
-	        inter = get_matches(extracted_citations, annotated_citations, 20)
-	        intersection = max(intersection, inter)
-	        precision = round(intersection/len(extracted_citations),2)
-	        recall = round(intersection/len(annotated_citations),2)
-	        stats['SR'].append(base_name)
+	for sr, citations_df in citations_files.items():
+	    if sr in annotations:
+	        annotations_df = annotations[sr]
+	        precision, recall = evaluate_citations(citations_df, annotations_df)
+	        stats['SR'].append(sr)
 	        stats['Precision'].append(precision)
 	        stats['Recall'].append(recall)
 	        print('Precision : ', precision)
@@ -67,7 +77,6 @@ if __name__=='__main__':
 	for filename in os.listdir(citations_folder):
 	    if not filename.startswith('.'):
 	        base_name = filename.split('.')[0]
-	        print(citations_folder+filename)
 	        citations_files[base_name] = pd.read_csv(citations_folder+filename)
 
 	stats = evaluate_citations(citations_files, annotations)
