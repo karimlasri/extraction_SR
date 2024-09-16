@@ -1,4 +1,4 @@
-from preprocess_annotations import *
+from loading_utils import *
 import argparse
 from evaluate import *
 import pandas as pd
@@ -6,22 +6,8 @@ import pandas as pd
 FIELDS = ['intervention', 'outcome', 'intervention_description', 'outcome_description']
 
 
-def get_annot_interv(sr_annot_dict):
-    annots = {field:[] for field in FIELDS}
-    annot_interv, annot_outcome, annot_interv_desc, annot_outcome_desc = [], [], [], []
-    for paper_index, paper_annot in sr_annot_dict.items():
-        for paper_field, paper_value in paper_annot.items():
-            try:
-                if paper_field.startswith('Interv'):
-                    annots['intervention'].append(paper_value['Name of intervention'])
-                    annots['intervention_description'].append(paper_value['Details of intervention'])
-                    for interv_field, interv_value in paper_value.items():
-                        if interv_field.startswith('Outcome'):
-                            annots['outcome'].append(interv_value['Name of the outcome'])
-                            if 'Outcome Details ' in interv_value.keys():
-                                annots['outcome_description'].append(interv_value['Outcome Details '])
-            except Exception:
-                pass
+def get_annot_interv(annotations_df):
+    annots = {field:annotations_df[annotations_df['Field']==field]['Answer'].tolist() for field in FIELDS}
     for field, values in annots.items():
         annots[field]=list(set(values))
     return annots
@@ -79,14 +65,14 @@ def evaluate_io_for_sr(sr_annotations, sr_io_mentions, eval_type='em', model_typ
 	return sr_eval, total
 
 
-def evaluate_io(io_dfs, processed_annotations, print_b=False, eval_type='em', model_type='google'):
+def evaluate_io(io_dfs, annotations, print_b=False, eval_type='em', model_type='google'):
 	""" Evaluates extraction for all systematic reviews """
     all_eval = {k:[] for k in ['sr']+['{}_{}'.format(eval_type, f) for f in FIELDS]}
     sims_fields = ['sr', 'annot', 'extraction', 'similarity', 'positive']
     all_sims_dict = {f:[] for f in sims_fields}
     for sr, sr_io_mentions in io_dfs.items():
         try:
-            sr_eval, total = evaluate_io_for_sr(processed_annotations[sr])
+            sr_eval, total = evaluate_io_for_sr(annotations[sr], sr_io_mentions, eval_type, model_type)
             all_eval['sr'].append(sr)
             for k, field in enumerate(FIELDS):
                 score = sr_eval[k]/max(1, total[k])
@@ -121,16 +107,13 @@ if __name__=='__main__':
         sep=','
     annotations_folder = f'../data/annotations/{batch}/'
     annotations = load_annotations(annotations_folder, sep=sep)
-    processed_annotations = {}
-    for sr, sr_annot_df in annotations.items():
-        processed_annotations[sr] = process_sr_annotations(sr_annot_df, print_b=False)
 
     ## Evaluate io from tables
     io_tables_folder = '../data/extraction/io_tables/' 
     io_tables_subdir = io_tables_folder + batch + '/' 
     
     io_dfs_tables = load_io_dfs_tables(io_tables_subdir)
-    all_em, sims_dict = evaluate_io(io_dfs_tables, processed_annotations, print_b=False, eval_type=eval_type, model_type='google')
+    all_em, sims_dict = evaluate_io(io_dfs_tables, annotations, print_b=False, eval_type=eval_type, model_type='google')
     if args.save_similarities:
         pd.DataFrame(sims_dict).to_csv(f'scores/similarities_io_tables_{eval_type}_{batch}.csv')
     pd.DataFrame(all_em).to_csv(f'scores/recall_io_tables_GTE_{eval_type}_{batch}.csv')

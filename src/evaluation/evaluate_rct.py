@@ -1,4 +1,4 @@
-from preprocess_annotations import *
+from loading_utils import *
 from evaluate import *
 import os
 
@@ -7,9 +7,8 @@ def evaluate_rctness_merged(merged_files, annotations):
     rct_stats = {k:[] for k in ['SR', 'Precision', 'Recall']}
     for sr, merged_df in merged_files.items():
         print("Computing RCT metrics for : ", sr)
-        if sr in processed_annotations:
-            annotations_dict = processed_annotations[sr]
-            annotated_titles = [annotations_dict[paper]['Title'] for paper in annotations_dict]
+        if sr, sr_annotations in annotations.items():
+            annotated_titles = sr_annotations[sr_annotations['Field']=='Title']['Answer'].tolist()
             
             merged_unique_df = merged_df.drop_duplicates('id')
             if 'study type' in merged_unique_df.columns.values:
@@ -35,13 +34,12 @@ def evaluate_rctness_merged(merged_files, annotations):
     return pd.DataFrame(rct_stats)
 
 
-def evaluate_rctness_prior(rct_files, processed_annotations):
+def evaluate_rctness_prior(rct_files, annotations):
     rct_stats = {k:[] for k in ['SR', 'Precision', 'Recall']}
     for sr, rct_df in rct_files.items():
-        print(sr)
-        if sr in processed_annotations:
-            annotations_dict = processed_annotations[sr]
-            annotated_citations = [annotations_dict[paper]['Citation'] for paper in annotations_dict]
+        print("Computing RCT metrics for : ", sr)
+        if sr, sr_annotations in annotations.items():
+            annotated_citations = sr_annotations[sr_annotations['Field']=='Citation']['Answer'].tolist()
             rct_df['id'] = get_ids(rct_df, 'rct')
             rct_unique_df = rct_df.drop_duplicates('id')
             extracted_df = rct_unique_df[~rct_unique_df['study type'].isna()]
@@ -96,10 +94,6 @@ if __name__=='__main__':
     annotations_folder = f'../data/annotations/{batch}/'
     annotations = load_annotations(annotations_folder, sep)
 
-    processed_annotations = {}
-    for sr, sr_annot_df in annotations.items():
-        processed_annotations[sr] = process_sr_annotations(sr_annot_df)
-
     df_stats_merged = evaluate_rctness_merged(merged_files, annotations)
     df_stats_merged.to_csv(f'scores/RCT_stats_merged_{batch}.csv')
 
@@ -108,9 +102,9 @@ if __name__=='__main__':
     rct_folder = f'../data/extraction/RCT/{batch}/'
     for filename in os.listdir(rct_folder):
         if filename.endswith('.csv'):
-            base_name = filename.split('.')[0].replace('new_formatted_', '')
-            rct_files[base_name] = pd.read_csv(rct_folder+filename)
+            sr = filename.split('.')[0].replace('new_formatted_', '')
+            rct_files[sr] = pd.read_csv(rct_folder+filename)
 
-    df_stats_prior = evaluate_rctness_prior(rct_files, processed_annotations)
+    df_stats_prior = evaluate_rctness_prior(rct_files, annotations)
     df_stats_prior.to_csv(f'scores/RCT_stats_prior_{batch}.csv')
     

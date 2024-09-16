@@ -1,4 +1,4 @@
-from preprocess_annotations import *
+from loading_utils import *
 from evaluate import *
 import re
 import numpy as np
