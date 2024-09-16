@@ -34,7 +34,7 @@ def get_effect_sizes(sr_annotations):
     return effect_sizes_dict
 
 
-def get_coverage_articles(fp_extraction, citations_dict):
+def get_recall_articles(fp_extraction, citations_dict):
     n_found = 0
     for paper_index, citation in citations_dict.items():
         found = False
@@ -50,58 +50,51 @@ def get_coverage_articles(fp_extraction, citations_dict):
     return n_found/len(citations_dict)
 
 
-def get_coverage_effect_sizes(fp_extraction, citations_dict, effect_sizes_dict, print_b=False):
+def look_for_annotation(annot, citation, fp_extraction):
+	found = False
+	annot = annot.replace('−', '-')
+	found_effect_sizes = re.findall('-?[0-9]\.[0-9]+', annot)
+	if re_ann_es:
+		ann_es = float(re_ann_es[0])
+		re_ann_ci = re.findall('(?:\(|\[)(.*)(?:\)|\])', annot)
+		if re_ann_ci:
+			ann_confidence_interval = re_ann_ci[0].split(',')
+			ann_ci = [float(ann_confidence_interval[0].strip()), float(ann_confidence_interval[1].strip())]
+			for i, row in fp_extraction.iterrows():
+				author = row.author.split(' ')[0]
+				year = row.year
+				if type(author)==str and str(year) in citation:
+					if citation.startswith(author):
+						extr_es = float(row.value)
+						extr_ci = ast.literal_eval(row['confidence interval'])
+						try:
+							extr_ci = [float(extr_ci[0]), float(extr_ci[1])]
+							if ann_es == extr_es and ann_ci == extr_ci:
+								found = True
+								break
+						except Exception:
+							pass
+	return found
+
+
+def get_recall_effect_sizes(fp_extraction, citations_dict, effect_sizes_dict):
     n_found = 0
     n_total = 0
     for paper_index, citation in citations_dict.items():
-#         print('Processing annotation of ES for paper {}'.format(paper_index))
         if paper_index in effect_sizes_dict:
-#             print('Found in extractions.')
             annots = effect_sizes_dict[paper_index]
             for annot in annots:
-                found = False
-                n_total +=1
-                annot = annot.replace('−', '-')
-                re_ann_es = re.findall('-?[0-9]\.[0-9]+', annot)
-                if re_ann_es:
-                    ann_es = float(re_ann_es[0])
-                    if print_b==True:
-                        print("Annotated effect size : ", ann_es)
-                    re_ann_ci = re.findall('(?:\(|\[)(.*)(?:\)|\])', annot)
-                    if re_ann_ci:
-                        ann_confidence_interval = re_ann_ci[0].split(',')
-                        ann_ci = [float(ann_confidence_interval[0].strip()), float(ann_confidence_interval[1].strip())]
-                        if print_b==True:
-                            print("Annotated confidence interval : ", ann_ci)
-                        for i, row in fp_extraction.iterrows():
-                            author = row.author.split(' ')[0]
-                            year = row.year
-                            if type(author)==str and str(year) in citation:
-                                if citation.startswith(author):
-                                    extr_es = float(row.value)
-                                    extr_ci = ast.literal_eval(row['confidence interval'])
-                                    if print_b ==True:
-                                        print("Extracted effect size : ", extr_es)                                    
-                                        print("Extracted confidence interval : ", extr_ci)
-                                    try:
-                                        extr_ci = [float(extr_ci[0]), float(extr_ci[1])]
-                                        if ann_es == extr_es and ann_ci == extr_ci:
-                                            found = True
-                                            break
-                                    except Exception:
-                                        pass
+				found = look_for_annotation(annot, citation, fp_extraction)
                 if found:
                     n_found+=1
-                else:
-                    if print_b==True:
-                        print(ann_es)
+				n_total +=1
     return n_found/n_total, n_total
 
 
 def evaluate_fp(annotations, fp_files):
-    eval_fp = {'SR':[], 'Nb. Extractions':[], 'Cov. Articles':[], 'Cov. Effect Sizes':[]}
+    eval_fp = {'SR':[], 'Nb. Extractions':[], 'Recall Articles':[], 'Recall Effect Sizes':[]}
     for sr, sr_annotations in annotations.items():
-        print(sr)
+        print('Evaluating forest plot extraction for SR : ', sr)
         titles_dict = get_titles(sr_annotations)
         citations_dict = get_citations(sr_annotations)
         effect_sizes_dict = get_effect_sizes(sr_annotations)
@@ -109,11 +102,8 @@ def evaluate_fp(annotations, fp_files):
         if sr in fp_files:
             fp_extraction = fp_files[sr]
             n_extractions = fp_extraction.shape[0]
-            print_b=False
-            if sr=='A2':
-                print_b=True
-            es_cov, n_annotations = get_coverage_effect_sizes(fp_extraction, citations_dict, effect_sizes_dict, print_b) 
-            art_cov = get_coverage_articles(fp_extraction, citations_dict)
+            es_cov, n_annotations = get_recall_effect_sizes(fp_extraction, citations_dict, effect_sizes_dict) 
+            art_cov = get_recall_articles(fp_extraction, citations_dict)
         else:
             n_extractions = 0
             es_cov = 0
@@ -157,7 +147,7 @@ if __name__=='__main__':
     annotations = load_annotations(annotations_folder, sep=sep)
     processed_annotations = {}
     for sr, sr_annot_df in annotations.items():
-        processed_annotations[sr] = process_sr_annotations(sr_annot_df, print_b=False)
+        processed_annotations[sr] = process_sr_annotations(sr_annot_df)
 
     # Load forest plots
     fp_files = {}
