@@ -1,6 +1,7 @@
 # Requirements
-Python >= 3.9
-Git
+
+- Python >= 3.9
+- Git
 
 # Configuration
 1. **Clone the repository**
@@ -46,9 +47,13 @@ Git
     source .env
     ```
 
+# Data structure
+Most scripts in this repository are written to perform extraction subsequent transforms on a batch of pdfs. 
+As a suggestion, prior to running the extraction pipeline, systematic review files could be put as a batch in a new subfolder of the ```data/raw_pdfs``` folder, e.g. ```data/raw_pdfs/Aug_6/```. The ```data``` folder should also contain an extraction subfolder, ```data/extraction``` where the output of extraction scripts will be stored as a batch subfolder, e.g. ```data/extraction/RCT```. 
+The last suggestion is to also include annotations in a subfolder such as ```data/annotations/Aug_6```. 
+
 
 # Extraction pipeline
-Prior to running the extraction pipeline, all systematic review files should be put in a new subfolder of the ```data/``` folder.
 
 ## Extract and parse bibliography
 
