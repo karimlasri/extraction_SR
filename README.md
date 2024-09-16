@@ -214,7 +214,7 @@ Where `batch` is the name of the batch from which the information is extracted
 For example:
 
 ```bash
-python src/merge_files/merge_files.py --batch Aug_6
+python src/merge_files/merge_files.py --pdf_folder data/raw_pdfs/Aug_6 --extraction_folder data/extraction/ --batch Aug_6
 ```
 
 The output folder will by default be `data/extraction/merged_extraction/{batch}` and will contain a csv file merging all the information extracted for each raw pdf.

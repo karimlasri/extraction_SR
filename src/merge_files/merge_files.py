@@ -4,17 +4,6 @@ import os
 import argparse
 
 
-def load_dfs(batch, file, extraction_folder='../data/extraction/'):
-    dfs = {}
-    dfs['citations'] = pd.read_csv(f'{extraction_folder}/parsed_citations/{batch}/{file}.csv')
-    dfs['fp'] = pd.read_csv(f'{extraction_folder}/FP/{batch}/FP_{file}.csv').drop('Unnamed: 0', axis=1)
-    dfs['rct'] = pd.read_csv(f'{extraction_folder}/RCT/{batch}/new_formatted_{file}.csv')
-    for df_type, df in dfs.items():
-        df['id'] = get_ids(df, df_type)
-        df['id'] = df['id'].astype(str)
-        dfs[df_type] = df
-        print("Found {} entries in {}".format(len(df['id']), df_type))
-    return dfs
 
 def get_first_author(authors):
     return authors.split(',')[0]
@@ -121,7 +110,7 @@ def get_fp_cit_df(dfs):
     return fp_cit_df
 
 
-def load_dfs_new(batch, file, extraction_folder='../data/extraction/'):
+def load_dfs(batch, file, extraction_folder='data/extraction/'):
     dfs = {}
     try:
         dfs['citations'] = pd.read_csv(f'{extraction_folder}/parsed_citations/{batch}/{file}.csv')
@@ -132,11 +121,11 @@ def load_dfs_new(batch, file, extraction_folder='../data/extraction/'):
     except Exception:
         dfs['fp'] = None
     try:
-        dfs['rct'] = pd.read_csv(f'{extraction_folder}/RCT/{batch}/new_formatted_{file}.csv')#.drop('Unnamed: 0', axis=1)
+        dfs['rct'] = pd.read_csv(f'{extraction_folder}/RCT/{batch}/new_formatted_{file}.csv')
     except Exception:
         dfs['rct'] = None
     try:
-        dfs['io_tables'] = pd.read_csv(f'{extraction_folder}/io_tables/{batch}/{file}.csv')#base_name))
+        dfs['io_tables'] = pd.read_csv(f'{extraction_folder}/io_tables/{batch}/{file}.csv')
     except Exception:
         dfs['io_tables'] = None
     for df_type, df in dfs.items():
@@ -148,10 +137,13 @@ def load_dfs_new(batch, file, extraction_folder='../data/extraction/'):
     return dfs
 
 
-def merge_dfs(batch):
-    pdf_folder = f'../data/raw_pdfs/{batch}/'
-    extraction_folder = '../data/extraction/'
-    out_folder = f'../data/extraction/merged_extraction/{batch}/'
+def merge_dfs(batch, pdf_folder, extraction_folder='data/extraction/'):
+	
+	merged_extraction_folder =  f'{extraction_folder}/merged_extraction/'
+	if not os.path.exists(merged_extraction_folder):
+	        os.mkdir(merged_extraction_folder)
+
+	out_folder = f'merged_extraction_folder/{batch}/'
     
     if not os.path.exists(out_folder):
         os.mkdir(out_folder)
@@ -159,20 +151,20 @@ def merge_dfs(batch):
     merged_dfs = {}
     stats = {'filename':[], 'nb_rct':[], 'nb_fp':[], 'nb_citations':[], 'nb_io_tables':[], 'nb_io_text':[]}
     
-    for filename in os.listdir(pdf_folder):#sub_path):
-        base_name = filename.split('.')[0]
-        print(base_name)
-        dfs = load_dfs_new(batch, base_name, extraction_folder)
+    for filename in os.listdir(pdf_folder):
+        sr = filename.split('.')[0]
+        print("Merging files for pdf : ", sr)
+        dfs = load_dfs(batch, sr, extraction_folder)
         found = True
-        stats['filename'].append(base_name)
+        stats['filename'].append(sr)
     
-        found = {} #{k:v is not None for k, v in dfs.items()}
+        found = {} 
         found_rct = True
         found_fp = True
         for df_type, df in dfs.items():
             if df is None:
                 found[df_type]=False
-                print('Coud not find {} for SR {}'.format(df_type, base_name))
+                print('Coud not find {} for SR {}'.format(df_type, sr))
                 stats['nb_{}'.format(df_type)].append(0)
             else:
                 found[df_type]=True
@@ -202,8 +194,8 @@ def merge_dfs(batch):
             else:
                 reord_cols = ['id', 'titles', 'citations', 'author', 'effect size', 'confidence interval', 'year'] + [c for c in merged_df.columns.values if c.startswith('country') or c.startswith('intervention') or c.startswith('outcome')]#, 'figure'
             merged_df = merged_df[reord_cols]
-            merged_df.to_csv(out_folder+'merged_extraction_{}.csv'.format(base_name))
-            merged_dfs[base_name] = merged_df
+            merged_df.to_csv(out_folder+'merged_extraction_{}.csv'.format(sr))
+            merged_dfs[sr] = merged_df
     return merged_dfs, stats
 
 
@@ -212,16 +204,18 @@ if __name__=='__main__':
         description="Merge extraction files for a given batch of systematic reviews."
     )
 
+	parser.add_argument("--pdf_folder", type=str, help="Folder where the raw pdf files are located.")
+	parser.add_argument("--extraction_folder", type=str, help="Folder where the extraction files are.", default="data/extraction/")
     parser.add_argument("--batch", type=str, help="Name of the batch.")
 
     args = parser.parse_args()
 
-    merged_dfs, stats = merge_dfs(args.batch)
+    merged_dfs, stats = merge_dfs(args.batch, args.pdf_folder, args.extraction_folder)
 
-    out_path = f'data/extraction/merged_extraction/{args.batch}/'
+    out_path = f'{args.extraction_folder}/merged_extraction/{args.batch}/'
     
     if not os.path.exists(out_path):
         os.mkdir(out_path)
     
-    for base_name, merged_df in merged_dfs.items():
-        merged_df.to_csv(out_path + f'merged_extraction_{base_name}.csv'
+    for sr, merged_df in merged_dfs.items():
+        merged_df.to_csv(out_path + f'merged_extraction_{sr}.csv'
