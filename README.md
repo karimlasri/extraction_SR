@@ -1,6 +1,7 @@
 # Requirements
 
-- Python >= 3.9
+- Python 3.9
+- Poetry
 - Git
 
 # Configuration
@@ -40,6 +41,7 @@
     Create a `.env` file at the root of the project and add the following environment variables
         - OPENAI_API_KEY
         - HUGGINGFACE_API_KEY
+	- GOOGLE_API_KEY
 
     And activate the variables with:
 
@@ -48,9 +50,9 @@
     ```
 
 # Data structure
-Most scripts in this repository are written to perform extraction subsequent transforms on a batch of pdfs. 
-As a suggestion, prior to running the extraction pipeline, systematic review files could be put as a batch in a new subfolder of the ```data/raw_pdfs``` folder, e.g. ```data/raw_pdfs/Aug_6/```. The ```data``` folder should also contain an extraction subfolder, ```data/extraction``` where the output of extraction scripts will be stored as a batch subfolder, e.g. ```data/extraction/RCT```. 
-The last suggestion is to also include annotations in a subfolder such as ```data/annotations/Aug_6```. 
+Most scripts in this repository are written to perform extraction and subsequent transforms on a batch of pdfs.
+As a suggestion, prior to running the extraction pipeline, systematic review files could be put as a batch in a new subfolder of the ```data/raw_pdfs``` folder, e.g. ```data/raw_pdfs/Aug_6/```. The ```data``` folder should also contain an extraction subfolder, ```data/extraction``` where the output of extraction scripts will be stored as a batch subfolder, e.g. ```data/extraction/RCT```.
+The last suggestion is to also include annotations in a subfolder such as ```data/annotations/Aug_6```.
 
 
 # Extraction pipeline
@@ -64,7 +66,7 @@ This scripts aims to extract all relevant bibliography entries from source pdfs.
 To execute this script, run:
 
 ```bash
-python src/extraction/get_bibliography/get_citations.py --pdf_folder <path_to_pdfs> --out_folder <path_to_extractions> 
+python src/extraction/get_bibliography/get_citations.py --pdf_folder <path_to_pdfs> --out_folder <path_to_extractions>
 ```
 
 With:
@@ -86,7 +88,7 @@ This scripts aims to parse the bibliography strings previously extracted from so
 To run the parsing with Google Gemini, run:
 
 ```bash
-python src/extraction/get_bibliography/parse_citations_google.py --pdf_folder <path_to_pdfs> --citations_folder <path_to_extractions> --out_folder <path_to_extractions> 
+python src/extraction/get_bibliography/parse_citations_google.py --pdf_folder <path_to_pdfs> --citations_folder <path_to_extractions> --out_folder <path_to_extractions>
 ```
 
 With:
@@ -103,7 +105,7 @@ python src/extraction/get_bibliography/parse_citations_google.py --pdf_folder da
 The output folder will contain csv files corresponding to input pdf files, each containing the parsed citations for a given systematic review.
 
 
-## RCT Extraction		
+## RCT Extraction
 
    Use the following command to run the `main_rct.py` script:
 
@@ -179,7 +181,7 @@ This script aims to get information about interventions and outcomes (their name
 To run the parsing with Google Gemini, run:
 
 ```bash
-python src/extraction/get_io/get_io_tables.py --tables_folder <path_to_tables> --out_folder <path_to_extraction> 
+python src/extraction/get_io/get_io_tables.py --tables_folder <path_to_tables> --out_folder <path_to_extraction>
 ```
 
 With:
@@ -189,7 +191,7 @@ With:
 For example:
 
 ```bash
-python src/extraction/get_io/get_io_tables.py --tables_folder data/extraction/tables/ --out_folder data/extraction/io_tables/ 
+python src/extraction/get_io/get_io_tables.py --tables_folder data/extraction/tables/ --out_folder data/extraction/io_tables/
 ```
 
 The output folder will contain csv files corresponding to input pdf files, each containing the interventions, outcomes and descriptions for a given systematic review.
@@ -206,7 +208,7 @@ To run the merging, you should first place extraction files in the following dat
 - `data/extraction/parsed_citations` for the parsed bibliography.
 
 ```bash
-python src/merge_files/merge_files.py --batch <name_of_batch> 
+python src/merge_files/merge_files.py --batch <name_of_batch>
 ```
 
 Where `batch` is the name of the batch from which the information is extracted
