@@ -6,10 +6,10 @@ authors = ["karimlasri <karim.lasri94@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.09"
+python = "^3.10.13"
 ipykernel = "^6.29.5"
 transformers = "^4.44.0"
-torch = "^2.4.0"
+torch = "2.2.1"
 openai = "^1.40.0"
 matplotlib = "^3.9.1"
 pandas = "^2.2.2"
@@ -17,7 +17,11 @@ python-dotenv = "^1.0.1"
 scikit-learn = "^1.5.1"
 google-generativeai = "^0.7.2"
 sentence-transformers = "^3.0.1"
-
+paddlepaddle = "2.6.1"
+paddleocr = "2.7.0.0"
+torchvision = "0.17.1"
+numpy = "1.26.4"
+setuptools = "^75.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pre-commit = "^3.7.1"
