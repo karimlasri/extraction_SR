@@ -10,7 +10,7 @@ from utils import (
     detect_tables_in_document,
     create_output_folder,
     save_pdf_pages_as_images,
-    extract_new_table,
+    extract_table,
 )
 
 from dotenv import load_dotenv  # Import dotenv to load .env file
@@ -110,7 +110,7 @@ def main():
     main_evaluate_dict = {}
 
     # Extract tables from detected pages
-    extract_new_table(
+    extract_table(
         Pages_Contains_Tables=intersection,
         ocr=ocr,
         evaluate_dict=evaluate_dict,

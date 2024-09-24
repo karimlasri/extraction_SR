@@ -2375,7 +2375,7 @@ def process_non_numeric_table(
             df_to_pickle(new_main_df, temp_output_folder, page_num, maxi, rotated)
 
 
-def extract_new_table(
+def extract_table(
     Pages_Contains_Tables,
     ocr,
     evaluate_dict,
