@@ -1,17 +1,18 @@
 import fitz
-from utils import (
-    initialize_models,
-    detect_tables_in_document,
-    create_output_folder,
-    save_pdf_pages_as_images,
-    extract_table,
-)
-
 from paddleocr import PaddleOCR
 import os
 import torch
 import argparse
 import openai
+
+from utils import (
+    initialize_models,
+    detect_tables_in_document,
+    create_output_folder,
+    save_pdf_pages_as_images,
+    extract_new_table,
+)
+
 from dotenv import load_dotenv  # Import dotenv to load .env file
 
 # Load environment variables from .env file
@@ -109,7 +110,7 @@ def main():
     main_evaluate_dict = {}
 
     # Extract tables from detected pages
-    extract_table(
+    extract_new_table(
         Pages_Contains_Tables=intersection,
         ocr=ocr,
         evaluate_dict=evaluate_dict,

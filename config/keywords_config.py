@@ -1,5 +1,4 @@
 # Define the keywords to search for RCT
-
 KEYWORDS = [
     "quasi",
     "Experimental",
@@ -28,3 +27,55 @@ KEYWORDS = [
     "Cluster-randomised",
     "cluster",
 ]
+
+
+# used in table parser
+word_end_strings = [
+    "about",
+    "around",
+    "and/or",
+    "whether",
+    "in",
+    "as",
+    "to",
+    "has",
+    "will",
+    "have",
+    "been",
+    "was",
+    "were",
+    "over",
+    "the",
+    "a",
+    "an",
+    "under",
+    "less than",
+    "more than",
+    "to",
+    "in",
+    "were",
+    "and",
+    "by",
+    "of",
+    "is",
+    "within",
+    "nearly",
+    "roughly",
+    "almost",
+    "below",
+    "exceeds",
+    "above",
+    "beyond",
+    "against",
+    "among",
+    "between",
+    "during",
+    "per",
+    "with",
+    "without",
+    "equals",
+    "from",
+]
+
+# used in table parser
+char_end_strings = [";", ",", "+", "=", ":", "/", "-"]

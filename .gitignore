@@ -16,3 +16,4 @@ src/*/*/.ipynb_checkpoints/
 .DS_Store
 src/*/.DS_Store
 src/*/*/.DS_Store
+config/*.pkl
