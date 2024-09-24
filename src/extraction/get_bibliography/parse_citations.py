@@ -217,36 +217,3 @@ if __name__ == "__main__":
     out_folder = args.out_folder
 
     process_pdfs(pdf_folder, citations_folder, out_folder)
-
-"""
-if __name__ == "__main__":
-
-    parser = argparse.ArgumentParser(
-        description="Parse extracted citations using google's Gemini model."
-    )
-
-    parser.add_argument("--pdf_folder", type=str, help="Path to the input pdfs.")
-    parser.add_argument(
-        "--citations_folder", type=str, help="Path to the extracted citations."
-    )
-    parser.add_argument("--out_folder", type=str, help="Path to output.")
-
-    args = parser.parse_args()
-
-    pdf_folder = "data/Batch_Aug_6"
-    citations_folder = args.citations_folder
-    out_folder = args.out_folder
-
-    if not os.path.exists(args.out_folder):
-        os.mkdir(args.out_folder)
-
-    for pdf_name in os.listdir(args.pdf_folder):
-        if pdf_name.endswith(".pdf"):
-            citations = load_citations(pdf_name, args.citations_folder)
-            # Process captions
-            data = process_citations(citations)
-            # Convert to DataFrame
-            df = pd.DataFrame(data)
-            # Save to CSV
-            df.to_csv(args.out_folder + pdf_name.split(".")[0] + ".csv", index=False)
-"""
