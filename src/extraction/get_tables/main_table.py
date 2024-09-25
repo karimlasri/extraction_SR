@@ -1,4 +1,10 @@
 import fitz
+from paddleocr import PaddleOCR
+import os
+import torch
+import argparse
+import openai
+
 from utils import (
     initialize_models,
     detect_tables_in_document,
@@ -7,11 +13,6 @@ from utils import (
     extract_table,
 )
 
-from paddleocr import PaddleOCR
-import os
-import torch
-import argparse
-import openai
 from dotenv import load_dotenv  # Import dotenv to load .env file
 
 # Load environment variables from .env file

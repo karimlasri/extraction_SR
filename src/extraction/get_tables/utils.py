@@ -1,39 +1,20 @@
-# Standard libraries
 import os
 import re
-import time
-import base64
 from collections import defaultdict
-
-# Data manipulation
 import pandas as pd
 import numpy as np
-
-# PDF handling
-import fitz  # PyMuPDF
+import fitz
 from fitz import Rect
-
-# Image processing
 from PIL import Image
 from torchvision import transforms
 import cv2
-
-# OCR and Object Detection
 from transformers import AutoModelForObjectDetection, TableTransformerForObjectDetection
-
-# Visualization
-
-# Deep Learning
 import torch
-
-# Hugging Face Hub
-
-# OpenAI API
-import openai
-
-# Additional libraries
-import requests
 import math
+import logging
+
+# import keywords
+from config.keywords_config import char_end_strings, word_end_strings
 
 
 def initialize_models():
@@ -73,7 +54,6 @@ def detect_tables_in_document(doc):
         list: A list of page numbers that likely contain tables.
     """
     pages_tables_contain = []
-    time_start = time.time()
 
     # Iterate through each page in the document
     for page_num, page in enumerate(doc):
@@ -119,31 +99,42 @@ def detect_tables_in_document(doc):
         if contains_table:
             pages_tables_contain.append(page_num)
 
-    time_end = time.time()
-    print(f"Time taken: {time_end - time_start} seconds")
-    print(f"Pages containing tables: {pages_tables_contain}")
-
     return pages_tables_contain
 
 
-# Example usage
-# pages_with_tables = detect_tables_in_document(doc)
-
-
 def get_image(file_path):
+    """
+    Opens an image from the specified file path, converts it to RGB format,
+    resizes it to 60% of its original dimensions, and returns the resized image.
+    """
     image = Image.open(file_path).convert("RGB")
-    # let's display it a bit smaller
     width, height = image.size
     image.resize((int(0.6 * width), (int(0.6 * height))))
     return image
 
 
 def get_image_size(file_path):
+    """
+    Opens an image from the specified file path, converts it to RGB format,
+    and returns the dimensions (width, height) of the image.
+    """
     image = Image.open(file_path).convert("RGB")
     return image.size
 
 
 def get_transform():
+    """
+    Creates and returns two transformations: one for detection and one for structure.
+
+    Detection transform resizes the image to a maximum size of 800 pixels,
+    converts it to a tensor, and normalizes it.
+    Structure transform resizes the image to a maximum size of 1000 pixels,
+    converts it to a tensor, and applies the same normalization.
+
+    Returns:
+        tuple: A tuple containing two transformation pipelines:
+               detection_transform and structure_transform.
+    """
     detection_transform = transforms.Compose(
         [
             MaxResize(800),
@@ -162,9 +153,21 @@ def get_transform():
 
 
 def get_objects(image, model, detection_transform, device):
+    """
+    Runs object detection on an image using the specified model and transformation.
+
+    Args:
+        image (PIL.Image): The input image to detect objects in.
+        model (torch.nn.Module): The pre-trained object detection model to be used.
+        detection_transform (torchvision.transforms.Compose): The transformation applied to the image before detection.
+        device (torch.device): The device (CPU or GPU) to run the model on.
+
+    Returns:
+        list: A list of detected objects with their labels and positions.
+    """
     pixel_values = detection_transform(image).unsqueeze(0)
     pixel_values = pixel_values.to(device)
-    # print(pixel_values.shape)
+
     id2label = model.config.id2label
     id2label[len(model.config.id2label)] = "no object"
     with torch.no_grad():
@@ -174,6 +177,15 @@ def get_objects(image, model, detection_transform, device):
 
 
 class MaxResize(object):
+    """
+    A class for resizing an image so that its largest dimension (width or height)
+    does not exceed a specified maximum size while maintaining the aspect ratio.
+
+    Args:
+        max_size (int): The maximum size (in pixels) for the largest dimension
+                        of the image. Default is 800.
+    """
+
     def __init__(self, max_size=800):
         self.max_size = max_size
 
@@ -189,6 +201,19 @@ class MaxResize(object):
 
 
 def outputs_to_objects(outputs, img_size, id2label):
+    """
+    Processes the model outputs to extract detected objects along with their
+    labels, confidence scores, and bounding boxes.
+
+    Args:
+        outputs (torch.Tensor): The output of the model, containing logits and predicted boxes.
+        img_size (tuple): The size of the original input image (width, height).
+        id2label (dict): A dictionary mapping label IDs to human-readable labels.
+
+    Returns:
+        list: A list of dictionaries, each representing a detected object with
+              keys for 'label', 'score', and 'bbox' (bounding box coordinates).
+    """
     m = outputs.logits.softmax(-1).max(-1)
     pred_labels = list(m.indices.detach().cpu().numpy())[0]
     pred_scores = list(m.values.detach().cpu().numpy())[0]
@@ -210,14 +235,37 @@ def outputs_to_objects(outputs, img_size, id2label):
     return objects
 
 
-# for output bounding box post-processing
 def box_cxcywh_to_xyxy(x):
+    """
+    Converts bounding boxes from center format (cx, cy, w, h) to corner format (x_min, y_min, x_max, y_max).
+
+    Args:
+        x (torch.Tensor): A tensor of shape (N, 4), where each box is represented by
+                          the center coordinates (cx, cy), width (w), and height (h).
+
+    Returns:
+        torch.Tensor: A tensor of shape (N, 4), where each box is represented by
+                      the corner coordinates (x_min, y_min, x_max, y_max).
+    """
     x_c, y_c, w, h = x.unbind(-1)
     b = [(x_c - 0.5 * w), (y_c - 0.5 * h), (x_c + 0.5 * w), (y_c + 0.5 * h)]
     return torch.stack(b, dim=1)
 
 
 def rescale_bboxes(out_bbox, size):
+    """
+    Rescales the bounding boxes from normalized coordinates to absolute coordinates
+    based on the size of the original image.
+
+    Args:
+        out_bbox (torch.Tensor): A tensor of bounding boxes in (center_x, center_y, width, height) format,
+                                 normalized (values between 0 and 1).
+        size (tuple): The size of the original image (width, height) as a tuple.
+
+    Returns:
+        torch.Tensor: A tensor containing rescaled bounding boxes in (x_min, y_min, x_max, y_max) format,
+                      with absolute coordinates relative to the original image size.
+    """
     img_w, img_h = size
     b = box_cxcywh_to_xyxy(out_bbox)
     b = b * torch.tensor([img_w, img_h, img_w, img_h], dtype=torch.float32)
@@ -226,8 +274,19 @@ def rescale_bboxes(out_bbox, size):
 
 def objects_to_crops(img, tokens, objects, class_thresholds, padding=0):
     """
-    Process the bounding boxes produced by the table detection model into
-    cropped table images and cropped tokens.
+    Processes the bounding boxes produced by the table detection model into
+    cropped table images and cropped tokens, while applying class thresholds
+    and optional padding.
+
+    Args:
+        img (PIL.Image.Image): The input image from which tables are to be cropped.
+        tokens (list): A list of token dictionaries, where each token contains a 'bbox' (bounding box).
+        objects (list): A list of detected objects, each containing 'label', 'score', and 'bbox'.
+        class_thresholds (dict): A dictionary containing confidence thresholds for each object class.
+        padding (int, optional): Optional padding to be added around the bounding boxes. Default is 0.
+
+    Returns:
+        list: A list of cropped tables, each containing an 'image' and corresponding 'tokens'.
     """
 
     table_crops = []
@@ -322,10 +381,13 @@ def oriented_process_cropped_table_image(
 
 def process_and_save_cropped_image(rgb_cropped_image, data_cropped_path):
     """
-    Saves a cropped image, reads it back, applies a threshold, and saves the thresholded image.
-    All operations are done within a directory named 'cropped_images'.
+    Saves a cropped image, reads it back using OpenCV, applies a binary threshold, and saves the thresholded image.
+    All operations are done within a directory named 'cropped_images', which is created if it does not exist.
 
     :param rgb_cropped_image: A PIL Image object representing the cropped image to process.
+    :param data_cropped_path: A string representing the path to the directory where images will be saved.
+
+    :return: The file path of the saved thresholded image.
     """
     # Create the directory if it doesn't exist
     directory_name = f"{data_cropped_path}/cropped_images"
@@ -350,28 +412,6 @@ def process_and_save_cropped_image(rgb_cropped_image, data_cropped_path):
     return thresholded_img_path
 
 
-def search_rct_in_area(pdf_document, page_number, y0, y1):
-    # Open the PDF file
-    doc = fitz.open(pdf_document)
-
-    # Load the specified page (convert to 0-based index)
-    page = doc.load_page(page_number)
-    blocks = page.get_text("blocks")  # Extract text blocks
-
-    # Iterate through each block
-    for block in blocks:
-        bbox = block[:4]  # Bounding box coordinates (x0, y0, x1, y1)
-        text = block[4]  # Extracted text
-
-        # Check if the block is within the specified vertical area
-        if y0 <= bbox[1] <= y1 or y0 <= bbox[3] <= y1:
-            # Check if "RCT" is present in the text
-            if "RCT" in text:
-                return "yes"
-
-    return "no"
-
-
 def process_ocr_results(ocr_results, x_range=None, y_range=None):
     """
     Processes OCR results to extract bounding box coordinates and text, and optionally filters them.
@@ -384,9 +424,9 @@ def process_ocr_results(ocr_results, x_range=None, y_range=None):
     bbox, text_blocks = [], []
 
     for item in ocr_results[0]:
-        a_point_x, a_point_y = item[0][0][0], item[0][0][1]
-        c_point_x, c_point_y = item[0][2][0], item[0][2][1]
-        avg_x, avg_y = (a_point_x + c_point_x) / 2, (a_point_y + c_point_y) / 2
+        # a_point_x, a_point_y = item[0][0][0], item[0][0][1]
+        # c_point_x, c_point_y = item[0][2][0], item[0][2][1]
+        # avg_x, avg_y = (a_point_x + c_point_x) / 2, (a_point_y + c_point_y) / 2
 
         # Uncomment and modify the conditional below if filtering is needed
         # if (x_range is None or x_range[0] < avg_x < x_range[1]) and (y_range is None or y_range[0] < avg_y < y_range[1]):
@@ -394,7 +434,7 @@ def process_ocr_results(ocr_results, x_range=None, y_range=None):
         text_blocks.append(item[1][0])
 
     y0ss = [sublist[0][1] for sublist in bbox]
-    integer_list = [int(l) for l in y0ss]
+    integer_list = [int(value) for value in y0ss]
 
     # Prepare the DataFrame
     df = pd.DataFrame(
@@ -411,6 +451,14 @@ def process_ocr_results(ocr_results, x_range=None, y_range=None):
 
 
 def find_unique_lines_row(df):
+    """
+    Identifies unique horizontal lines (Y coordinates) from a dataframe that contains Y0 and Y1 coordinates for each row.
+    The function calculates the average row height and uses it to determine a sensitivity threshold for detecting unique lines.
+
+    :param df: A pandas DataFrame containing at least two columns 'Y0' and 'Y1' which represent the Y-coordinate bounds of each row.
+
+    :return: A list of unique Y0 coordinates, representing the starting positions of unique lines.
+    """
     # Calculate heights and their mean
     heights = [row["Y1"] - row["Y0"] for i, row in df.iterrows()]
     height_mean = sum(heights) / len(heights)
@@ -433,6 +481,15 @@ def find_unique_lines_row(df):
 
 
 def find_unique_lines_column(df):
+    """
+    Identifies unique vertical lines (X coordinates) from a dataframe that contains X0 and X1 coordinates for each row.
+    The function calculates the average column width and uses it to determine a sensitivity threshold for detecting unique lines.
+
+    :param df: A pandas DataFrame containing at least two columns 'X0' and 'X1' which represent the X-coordinate bounds of each column.
+
+    :return: A list of unique X0 coordinates, representing the starting positions of unique vertical lines.
+    """
+
     # Calculate heights and their mean
     heights = [row["X1"] - row["X0"] for i, row in df.iterrows()]
     height_mean = sum(heights) / len(heights)
@@ -463,6 +520,18 @@ def find_segment(midpoint, lines):
 
 
 def assign_row_col_numbers(df, row_lines, column_lines):
+    """
+    Assigns row and column numbers to each item in a dataframe based on its X and Y coordinates.
+    The function calculates midpoints for the X and Y coordinates and uses them to determine
+    which row and column each item belongs to by comparing with predefined row and column lines.
+
+    :param df: A pandas DataFrame containing at least the columns 'X0', 'X1', 'Y0', and 'Y1'.
+               These represent the bounding box coordinates of the items.
+    :param row_lines: A list of Y0 values that define the horizontal lines for each row.
+    :param column_lines: A list of X0 values that define the vertical lines for each column.
+
+    :return: The updated DataFrame with 'RowNumber' and 'ColumnNumber' columns assigned.
+    """
     # Calculate midpoints
     df["MidX"] = (df["X0"] + df["X1"]) / 2
     df["MidY"] = (df["Y0"] + df["Y1"]) / 2
@@ -474,59 +543,14 @@ def assign_row_col_numbers(df, row_lines, column_lines):
     return df
 
 
-# Function to classify table headers from a LaTeX table using GPT-4
-def classify_headers_from_latex_with_gpt(latex_content):
-    # Preprocess the LaTeX content to get only the table part
-    table_pattern = re.compile(r"\\begin{tabular}.*?\\end{tabular}", re.DOTALL)
-    table_match = table_pattern.search(latex_content)
-
-    # If no table found, raise an error
-    if not table_match:
-        raise ValueError("No table found in the LaTeX content")
-
-    table_content = latex_content
-    # Escape curly braces in the LaTeX content
-    escaped_table_content = table_content.replace("{", "{{").replace("}", "}}")
-
-    # Prepare the prompt for GPT-4
-    prompt = f"""
-    Given a LaTeX table entry describing a study, classify whether the study type is an RCT or not. Look for specific keywords and phrases that indicate randomization and controlled conditions. The output should be "RCT" if the study is a Randomized Controlled Trial and "Not RCT" otherwise.
-    Describe this result in the provided latex table using the JSON templates below. The author names might include organization names as well, for example "World Bank." Use the appropriate template based on the type of study: "RCT", "Not RCT". For any unanswerable attributes in the templates, set their value to the placeholder "xx" if it is a string type.
-
-    JSON Templates:
-
-    {{"author names": "xx", "type": "RCT", "year": "xx"}}
-    {{"author names": "xx", "type": "NOT RCT", "year": "xx"}}
-
-
-    Latex:
-    {escaped_table_content}
-
-    Please provide the results in JSON format.
-
-    Json:
-    """
-
-    # Call the OpenAI API
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[
-            {
-                "role": "system",
-                "content": "You are an assistant that extracts the author names as a list, as well as the year, and maps them to the corresponding study type, determining whether it is an RCT or not.",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=2000,
-        temperature=0,
-    )
-
-    # Extract the classifications from the response
-    classifications = response["choices"][0]["message"]["content"].strip()
-    return classifications
-
-
 def save_pdf_pages_as_images(pdf_path, page_numbers, output_folder):
+    """
+    Saves specific pages of a PDF as images. Each page is rendered at 300 DPI and saved as a PNG file.
+
+    :param pdf_path: The file path to the input PDF.
+    :param page_numbers: A list of page numbers to be saved as images. Pages are 0-indexed.
+    :param output_folder: The folder where the images will be saved.
+    """
     doc = fitz.open(pdf_path)
 
     # Loop through the specified page numbers
@@ -545,13 +569,18 @@ def save_pdf_pages_as_images(pdf_path, page_numbers, output_folder):
         # Save the pixmap as an image
         output_path = f"{output_folder}/page_{page_number}.png"
         pixmap.save(output_path)
-        # print(f"Page {page_number} saved as {output_path}")
 
     # Close the PDF document
     doc.close()
 
 
 def create_output_folder(output_folder_name):
+    """
+    Creates an output folder in the current working directory if it doesn't already exist.
+
+    :param output_folder_name: The name of the folder to be created.
+    :return: The full path of the output folder.
+    """
     # Get the root directory
     root_directory = os.getcwd()  # This gets the current working directory
 
@@ -568,8 +597,19 @@ def create_output_folder(output_folder_name):
     return output_folder
 
 
-## process transformer files
 def process_table_cells(cells):
+    """
+    Processes a list of table cells, filters and adjusts their bounding boxes, and resolves overlaps.
+
+    :param cells: A list of table cell dictionaries, each containing a 'label' and a 'bbox' (bounding box),
+                  along with other metadata such as 'score' for overlap resolution.
+
+    :return: A tuple containing filtered and processed cells:
+        - table_columns_only: Filtered list of cells labeled as 'table column'.
+        - table_columns_header_only: Adjusted list of cells labeled as 'table column header'.
+        - table_columns_row_header_only: Filtered list of cells labeled as 'table projected row header'.
+        - table_columns_spanning_only_sorted: Sorted list of cells labeled as 'table spanning cell' by their y-axis position.
+    """
     # Filter cells by their labels
     table_columns_only = [cell for cell in cells if cell["label"] == "table column"]
     table_columns_header_only = [
@@ -622,7 +662,7 @@ def process_table_cells(cells):
             )
             if overlap > overlap_threshold:
                 indices_with_overlap.append((i, j))
-    # print(indices_with_overlap)
+
     # Resolve overlapping columns based on scores
     for i, j in indices_with_overlap:
         if table_columns_only[i]["score"] > table_columns_only[j]["score"]:
@@ -746,6 +786,17 @@ def oriented_adjust_bounding_boxes(
 
 
 def extract_blocks_with_coords(page):
+    """
+    Extracts text blocks along with their coordinates (bounding box) from a page.
+
+    Parameters:
+    page (object): The page object that contains the text and visual elements.
+
+    Returns:
+    tuple: A tuple containing:
+        - text_blocks (list of str): A list of text blocks (words) from the page.
+        - coords (list of tuples): A list of coordinates (x0, y0, x1, y1) for each word.
+    """
     text_blocks, coords = [], []
     for word in page.get_text("words"):
         coords.append((word[0], word[1], word[2], word[3]))
@@ -754,6 +805,17 @@ def extract_blocks_with_coords(page):
 
 
 def find_near_duplicates(sequence, diff=5):
+    """
+    Finds near-duplicate values in a sequence based on a difference threshold.
+
+    Parameters:
+    sequence (list of float): The input sequence of values.
+    diff (int): The threshold difference used to group near-duplicates (default is 5).
+
+    Returns:
+    defaultdict: A dictionary where keys are rounded groups of values and values
+                 are lists of indices from the original sequence.
+    """
     updated_tally = defaultdict(list)
     for index, item in enumerate(sequence):
         updated_tally[round(item / diff) * diff].append(index)
@@ -761,6 +823,19 @@ def find_near_duplicates(sequence, diff=5):
 
 
 def remove_y_duplicates(lines, threshold=2):
+    """
+    Removes duplicate lines based on their Y-axis coordinates, keeping only one line
+    if two lines are close to each other vertically.
+
+    Parameters:
+    lines (list of tuples): A list of lines, where each line is represented as a tuple
+                            of coordinates ((x0, y0), (x1, y1)).
+    threshold (float): The minimum Y-axis distance between two lines to consider them as separate.
+                       Lines closer than this value are considered duplicates (default is 2).
+
+    Returns:
+    list: A cleaned list of lines, where duplicates (based on Y-axis proximity) are removed.
+    """
     cleaned_lines, previous_line = [], None
     for line in sorted(lines, key=lambda line: (line[0][1] + line[1][1]) / 2):
         current_y_avg = (line[0][1] + line[1][1]) / 2
@@ -775,6 +850,12 @@ def remove_y_duplicates(lines, threshold=2):
 
 
 def average_whitespace_distance_by_line(page):
+    """
+    Calculates the average whitespace distance between words for each line of text on a PDF page.
+
+    :param page: A PDF page object with text data, where each word is represented as a tuple containing its bounding box and text.
+    :return: A dictionary where keys are line bounding boxes (y0, y1) and values are the average whitespace distance between words in that line.
+    """
     lines, avg_distances = {}, {}
     for word in page.get_text("words"):
         _, y0, _, y1 = word[:4]
@@ -795,6 +876,20 @@ def average_whitespace_distance_by_line(page):
 
 
 def detect_table(page, text_blocks, count_lines, perc_vertical, perc_horizontal):
+    """
+    Detects if a page contains a table based on whitespace distances, numeric content,
+    and line orientation ratios.
+
+    Parameters:
+    page (object): The page object that contains the text and visual elements of the page.
+    text_blocks (list of str): A list of text blocks from the page.
+    count_lines (int): The number of lines present on the page.
+    perc_vertical (float): The percentage of vertical lines on the page.
+    perc_horizontal (float): The percentage of horizontal lines on the page.
+
+    Returns:
+    bool: Returns True if the page likely contains a table, False otherwise.
+    """
     average_distance = list(average_whitespace_distance_by_line(page).values())
     page_text = page.get_text()
     page_searchable = page_text.strip()
@@ -814,6 +909,19 @@ def detect_table(page, text_blocks, count_lines, perc_vertical, perc_horizontal)
 
 
 def extract_row_headers(updated_df, mapped_df, distance_threshold=65, column_number=1):
+    """
+    Extracts row headers from a dataframe by identifying rows that are missing large horizontal gaps
+    between text blocks and merging the corresponding text entries from another dataframe.
+
+    Parameters:
+    updated_df (pd.DataFrame): The dataframe containing row and column data, including coordinates (X0, X1).
+    mapped_df (pd.DataFrame): The dataframe containing text data to map and merge into the final headers.
+    distance_threshold (int): Threshold for considering gaps between text blocks as large. Default is 65.
+    column_number (int): The column number to filter rows for. Default is column 1.
+
+    Returns:
+    dict: A dictionary with row numbers as keys and their refined header text as values.
+    """
     # Step 1: Sort and calculate distances
     df = updated_df.copy()
     df = df.sort_values(by=["RowNumber", "X0"])
@@ -871,6 +979,22 @@ def extract_row_headers(updated_df, mapped_df, distance_threshold=65, column_num
 
 
 def get_raw_dataframes(df, pdf_column_matrix):
+    """
+    Processes a DataFrame by splitting text into individual words, adjusting X0 and X1 coordinates
+    for each word, and mapping the text into a row-column structure based on the provided
+    pdf_column_matrix.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing 'Text', 'X0', 'X1', and positional information.
+    pdf_column_matrix (list of lists): A matrix containing column boundaries extracted from a PDF.
+
+    Returns:
+    tuple: A tuple containing the following DataFrames and data:
+        - new_df (pd.DataFrame): DataFrame where text has been split and coordinates adjusted.
+        - updated_df (pd.DataFrame): DataFrame with row and column numbers assigned.
+        - mapped_df (pd.DataFrame): Pivoted DataFrame where text is grouped by row and column.
+        - row_lines (list): A sorted list of unique row boundaries.
+    """
     # Function to split text and adjust X0, X1 values based on word boundaries
     def split_text_adjust_coordinates(row):
         text = row["Text"]
@@ -944,6 +1068,16 @@ def get_raw_dataframes(df, pdf_column_matrix):
 
 
 def is_float(value):
+    """
+    Determines if a given value contains a numeric fragment that can be considered a float,
+    while ensuring that the string is not predominantly alphabetic.
+
+    Parameters:
+    value (str/int/float): The value to check if it represents a float.
+
+    Returns:
+    bool: True if the value contains a valid float or numeric fragment, False otherwise.
+    """
     # Convert value to string to ensure compatibility with regex
     value_str = str(value)
 
@@ -971,6 +1105,17 @@ def is_float(value):
 
 
 def identify_table_type(df):
+    """
+    Identifies the type of a table by determining whether the majority of its columns contain numeric values.
+    If more than 70% of the entries in a column are numeric, the table is classified as "Numeric".
+    Otherwise, it is classified as "Unnumeric".
+
+    Parameters:
+    df (pd.DataFrame): The input dataframe containing the table data.
+
+    Returns:
+    str: "Numeric" if any column has more than 70% numeric values, otherwise "Unnumeric".
+    """
     # Remove rows where all columns are empty
     df = df.loc[~(df == "").all(axis=1)]
 
@@ -978,7 +1123,7 @@ def identify_table_type(df):
     for column in df.columns:
         # Use a lambda function to apply the float check
         float_count = df[column].apply(lambda x: is_float(x)).mean()
-        print(f"Float percentage for column {column}: {float_count * 100:.2f}%")
+        # print(f"Float percentage for column {column}: {float_count * 100:.2f}%")
         # Check if more than 70% of the column's entries are considered float
         if float_count > 0.70:
             return "Numeric"
@@ -1018,6 +1163,17 @@ def create_mapped_views(df):
 
 
 def largest_less_than(numbers, target):
+    """
+    Finds the largest number in a list that is less than the target.
+
+    Parameters:
+    numbers (list of int/float): The list of numbers to search.
+    target (int/float): The target number to compare against.
+
+    Returns:
+    int/float: The largest number in the list that is less than the target.
+               Returns the target itself if no such number exists.
+    """
     # Filter out numbers that are less than the target
     less_than_target = [num for num in numbers if num < target]
 
@@ -1029,6 +1185,17 @@ def largest_less_than(numbers, target):
 
 
 def find_closest(numbers, target):
+    """
+    Finds the number in the list that is closest to the target value.
+
+    Parameters:
+    numbers (list of int/float): The list of numbers to search.
+    target (int/float): The target number to find the closest match for.
+
+    Returns:
+    int/float: The number in the list closest to the target.
+               If the list is empty or invalid, returns the target itself.
+    """
     # Sort the list first (optional if the list is already sorted)
 
     if numbers is None or not isinstance(numbers, list) or len(numbers) == 0:
@@ -1044,6 +1211,17 @@ def find_closest(numbers, target):
 
 
 def detect_horizontal_lines(image_path):
+    """
+    Detects horizontal lines in an image using edge detection and Hough Line Transform.
+    Filters out lines that are close to each other to return unique horizontal lines.
+
+    Parameters:
+    image_path (str): The path to the input image.
+
+    Returns:
+    list: A sorted list of the y-coordinates of unique horizontal lines in the image.
+          Returns None if the image cannot be loaded or no lines are detected.
+    """
     # Load the image
     img = cv2.imread(image_path)
     # Check if image has been loaded properly
@@ -1087,12 +1265,35 @@ def detect_horizontal_lines(image_path):
 
 
 def line_distance(line1, line2):
+    """
+    Calculates the minimum distance between two lines based on their endpoints.
+
+    Parameters:
+    line1 (tuple): A tuple representing the first line's coordinates (x1, y1, x2, y2).
+    line2 (tuple): A tuple representing the second line's coordinates (x3, y3, x4, y4).
+
+    Returns:
+    float: The minimum distance between the two lines by calculating the distance between
+           their respective endpoints.
+    """
     x1, y1, x2, y2 = line1
     x3, y3, x4, y4 = line2
     return min(math.dist((x1, y1), (x3, y3)), math.dist((x2, y2), (x4, y4)))
 
 
 def is_horizontal(line, angle_threshold=10):
+    """
+    Determines if a given line is approximately horizontal by calculating its angle
+    and checking whether it falls within a specified threshold of horizontal (0 or 180 degrees).
+
+    Parameters:
+    line (tuple): A tuple representing the line's coordinates (x1, y1, x2, y2).
+    angle_threshold (float): The maximum allowable deviation from 0 or 180 degrees
+                             for the line to be considered horizontal. Default is 10 degrees.
+
+    Returns:
+    bool: True if the line is considered horizontal, False otherwise.
+    """
     x1, y1, x2, y2 = line
     angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
     return abs(angle) < angle_threshold or abs(angle - 180) < angle_threshold
@@ -1214,8 +1415,22 @@ def group_by_main_line(main_list, row_list):
     return group_dict
 
 
-# Function to decide aggregation based on dtype
 def get_aggregations(df):
+    """
+    Generates a dictionary of aggregation functions for each column of a DataFrame.
+    The aggregation logic is based on the data type of each column:
+
+    - Numeric columns: The values are converted to strings and concatenated.
+    - String columns: The values are concatenated directly.
+    - Other data types: The values are also concatenated directly.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame for which to generate aggregation functions.
+
+    Returns:
+    dict: A dictionary where the keys are column names and the values are functions that define
+          how to aggregate the respective column (by concatenating the values as strings).
+    """
     aggregations = {}
     for col in df.columns:
         if pd.api.types.is_numeric_dtype(df[col]):
@@ -1225,57 +1440,6 @@ def get_aggregations(df):
         else:
             aggregations[col] = lambda x: " ".join(x)
     return aggregations
-
-
-# Define the list of strings for rule 1
-word_end_strings = [
-    "about",
-    "around",
-    "and/or",
-    "whether",
-    "in",
-    "as",
-    "to",
-    "has",
-    "will",
-    "have",
-    "been",
-    "was",
-    "were",
-    "over",
-    "the",
-    "a",
-    "an",
-    "under",
-    "less than",
-    "more than",
-    "to",
-    "in",
-    "were",
-    "and",
-    "by",
-    "of",
-    "is",
-    "within",
-    "nearly",
-    "roughly",
-    "almost",
-    "below",
-    "exceeds",
-    "above",
-    "beyond",
-    "against",
-    "among",
-    "between",
-    "during",
-    "per",
-    "with",
-    "without",
-    "equals",
-    "from",
-]
-
-char_end_strings = [";", ",", "+", "=", ":", "/", "-"]
 
 
 def should_merge_based_on_string(text, next_text):
@@ -1293,6 +1457,19 @@ def should_merge_based_on_string(text, next_text):
 
 
 def get_merged_text_values(text_values, x_coords, y_coords):
+    """
+    Merges consecutive text values in a list based on certain conditions, while maintaining
+    the position of empty spaces and invalid entries. Merging is controlled by x-coordinates
+    and certain string conditions.
+
+    Parameters:
+    text_values (list of str): List of text values to be merged.
+    x_coords (list of float): List of x-coordinates corresponding to the text values.
+    y_coords (list of float): List of y-coordinates corresponding to the text values.
+
+    Returns:
+    list of str: A list of text values where certain entries have been merged.
+    """
     output = [""] * len(text_values)  # Initialize output with empty strings
     i = 0
 
@@ -1353,8 +1530,21 @@ def get_merged_text_values(text_values, x_coords, y_coords):
     return output
 
 
-# Applying the get_merged_text_values function on columns of the DataFrame and returning the result as a DataFrame
 def apply_and_join(df, df_x, df_y):
+    """
+    Applies the merging logic to each column of a DataFrame by utilizing corresponding x and y coordinates.
+    The function defragments text entries based on certain merging conditions and returns a new DataFrame
+    with the merged text.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame containing text values to be merged.
+    df_x (pd.DataFrame): A DataFrame containing the x-coordinates corresponding to the text values.
+    df_y (pd.DataFrame): A DataFrame containing the y-coordinates corresponding to the text values.
+
+    Returns:
+    pd.DataFrame: A new DataFrame where the text values have been defragmented (merged) based on the
+                  conditions applied through `get_merged_text_values`.
+    """
     result_dict = {}
     df_x.columns = df.columns
     df_y.columns = df.columns
@@ -1416,7 +1606,7 @@ def count_non_blank_cells(df):
         for cell in row:
             if not is_blank(cell):
                 blank_count += 1
-        print(f"Row {index} has {blank_count} non-blank cells.")
+        # print(f"Row {index} has {blank_count} non-blank cells.")
         blank_list.append(blank_count)
 
     return blank_list
@@ -1492,6 +1682,18 @@ def new_find_intervals_max_positions(data, threshold=1):
 
 
 def merge_rows_generalized(df, intervals):
+    """
+    Merges rows in a DataFrame based on specified intervals, combining numeric and string columns
+    appropriately. Numeric values can be aggregated (e.g., summed or averaged), and string values
+    are concatenated while preserving order and removing duplicates.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame with rows to be merged.
+    intervals (list of lists): A list of intervals (ranges of indices) specifying which rows should be merged.
+
+    Returns:
+    pd.DataFrame: A new DataFrame where the rows within the specified intervals have been merged.
+    """
     # Prepare a list to collect merged rows
     merged_rows = []
 
@@ -1522,8 +1724,17 @@ def merge_rows_generalized(df, intervals):
     return pd.DataFrame(merged_rows)
 
 
-# Function to split text based on more than one space and reformat for display purposes
 def format_space_text(text):
+    """
+    Formats a text by splitting it into parts based on two or more spaces, and then joins
+    the parts with newline characters to mimic separate lines.
+
+    Parameters:
+    text (str): The input text to be formatted. If the input is not a string, it is returned as-is.
+
+    Returns:
+    str: The formatted text where parts are separated by newlines, or the original input if it's not a string.
+    """
     # Ensure the function handles non-string data gracefully
     if isinstance(text, str):
         # Use regular expression to split on two or more spaces
@@ -1535,13 +1746,26 @@ def format_space_text(text):
         return text
 
 
-# Function to check if a row is empty
 def is_row_empty(row):
+    """
+    Function to check if a row is empty
+    """
     return all(isinstance(x, str) and x.strip() == "" for x in row)
 
 
-# Function to check if any column has more than 75% of entries starting with an uppercase letter
 def check_uppercase_percentage(df):
+    """
+    Checks each column in the DataFrame to see if more than 75% of non-empty string entries
+    start with an uppercase letter. If any column meets this condition, it returns "Yes",
+    otherwise it returns "No".
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame to be analyzed.
+
+    Returns:
+    str: "Yes" if any column has more than 75% of entries starting with an uppercase letter,
+         otherwise "No".
+    """
     for column in df.columns:
         if df[column].dtype == "object":
             # Count the number of non-empty strings that start with an uppercase letter
@@ -1713,13 +1937,27 @@ def update_row_headers_with_intervals(df, intervals, row_headers, count_incremen
 
 
 def insert_row_headers_result_uppercase(df, initial_row_headers, count_plus_one):
+    """
+    Inserts row headers into a DataFrame at specified positions, adjusting the positions based on a
+    provided count offset. The function validates the input data, updates the row headers' positions,
+    and then inserts the row headers into the DataFrame.
+
+    Parameters:
+    df (pd.DataFrame): The input DataFrame into which the row headers will be inserted.
+    initial_row_headers (dict): A dictionary where the keys represent the positions of the row headers
+                                and the values are the row header strings.
+    count_plus_one (int): The count used to adjust the positions of the row headers.
+
+    Returns:
+    pd.DataFrame: The DataFrame with the row headers inserted at the adjusted positions.
+    """
     # Validate input data
     if not data:
-        print("The data dictionary is empty.")
+        # print("The data dictionary is empty.")
         return df
 
     if not initial_row_headers:
-        print("The initial row headers dictionary is empty.")
+        # print("The initial row headers dictionary is empty.")
         return df
 
     # Update row headers by subtracting the given count + 1
@@ -1732,7 +1970,7 @@ def insert_row_headers_result_uppercase(df, initial_row_headers, count_plus_one)
     min_position = min(updated_row_headers.keys(), default=0)
 
     if min_position < 0 or max_position > df.index[-1] + 1:
-        print("Row header positions are out of the valid range.")
+        # print("Row header positions are out of the valid range.")
         return df
 
     # Convert the dataframe to a list of lists for easier manipulation
@@ -1749,51 +1987,392 @@ def insert_row_headers_result_uppercase(df, initial_row_headers, count_plus_one)
     return updated_df
 
 
-class HeaderClassifier:
-    def __init__(self, api_key, image_path):
-        self.api_key = api_key
-        self.image_path = image_path
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
+def process_page_characteristics(image, model, device, page):
+    """
+    Processes the characteristics of a page, including object detection, text extraction,
+    bounding box analysis, and page metadata such as rotation and searchability.
 
-    def encode_image(self):
-        with open(self.image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode("utf-8")
+    Parameters:
+    image (PIL.Image or similar): The image of the page to be processed.
+    file_path (str): The file path for the document.
+    model (torch.nn.Module or similar): The model used for object detection.
+    device (torch.device): The device (CPU/GPU) used for running the model.
+    page (Page object): The page object containing text and bounding box information.
 
-    def classify_image(self):
-        base64_image = self.encode_image()
+    Returns:
+    tuple: A tuple containing the following:
+        - page_table_rotated (bool): Whether the table on the page is detected as rotated.
+        - page_mix_ocr (bool): Whether any bounding boxes contain 'ignore-text', indicating mixed OCR.
+        - page_rotation (int): The rotation angle of the page.
+        - page_searchable (bool): Whether the page contains searchable text.
+        - objects (list): A list of detected objects sorted by their vertical position.
+        - structure_transform (function): The transformation used for structure detection.
+    """
 
-        payload = {
-            "model": "gpt-4o",
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": "Given the input document containing table, classify the table based on the presence or absence of explicit headers. A table without explicit headers lacks a clearly defined row that specifies the column names or categories. For each table, return the classification result as 'Explicit Header' or 'No Explicit Header' only. If a table uses implicit headers that span multiple rows or are embedded within the table, it should still be classified as 'No Explicit Header'",
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            "max_tokens": 1000,
-            "temperature": 0.0,
-        }
+    # Get transformations for detection and structure
+    detection_transform, structure_transform = get_transform()
 
-        response = requests.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers=self.headers,
-            json=payload,
+    # Detect objects using the model and transform
+    objects = get_objects(image, model, detection_transform, device)
+
+    # Initialize page_table_rotated flag
+    if objects:
+        page_table_rotated = objects[0]["label"] == "table rotated"
+    else:
+        page_table_rotated = False
+
+    # Extract text and bounding boxes from the page
+    page_text = page.get_text()
+    bbox_log = page.get_bboxlog()
+
+    # Check if any bounding boxes have 'ignore-text'
+    page_mix_ocr = any("ignore-text" in bbox[0] for bbox in bbox_log)
+
+    # Get page rotation
+    page_rotation = page.rotation
+
+    # Check if the page text is searchable
+    page_searchable = bool(page_text.strip())
+
+    # Sort objects by their vertical position (second coordinate in bbox)
+    objects = sorted(objects, key=lambda x: x["bbox"][1])
+
+    # Return all extracted information as a dictionary
+    return (
+        page_table_rotated,
+        page_mix_ocr,
+        page_rotation,
+        page_searchable,
+        objects,
+        structure_transform,
+    )
+
+
+def process_table_image(
+    tables_crops,
+    i,
+    device,
+    structure_transform,
+    structure_model,
+    outputs_to_objects,
+    ocr,
+    crop_padding,
+    data_cropped_path,
+    objects,
+):
+    """
+    Process a cropped table image and extract structured data.
+
+    :param tables_crops: List of cropped tables.
+    :param i: Index of the current table to process.
+    :param device: Computational device (CPU/GPU) for processing.
+    :param structure_transform: Image transformations for preprocessing.
+    :param structure_model: Model for structure prediction.
+    :param outputs_to_objects: Function to convert model outputs to objects.
+    :param ocr: OCR engine for text recognition.
+    :param crop_padding: Padding used during the cropping process.
+    :return: Tuple containing processed DataFrames and row headers.
+    """
+    # Process the oriented cropped table image
+    cropped_table = tables_crops[i]["image"]
+    process_table_image, rgb_cropped_image = oriented_process_cropped_table_image(
+        cropped_table, device, structure_transform, structure_model, outputs_to_objects
+    )
+
+    # Get table cells classified by their type and adjusted bounding boxes
+    (
+        table_columns_only,
+        table_columns_header_only,
+        table_columns_row_header_only,
+        table_columns_spanning_only_sorted,
+    ) = process_table_cells(process_table_image)
+    (
+        pdf_column_matrix,
+        pdf_column_header_matrix,
+        pdf_row_header_matrix,
+        pdf_spanning_header_matrix,
+    ) = oriented_adjust_bounding_boxes(
+        table_columns_only,
+        table_columns_header_only,
+        table_columns_row_header_only,
+        table_columns_spanning_only_sorted,
+        objects[i]["bbox"],
+        crop_padding,
+    )
+
+    # Save the cropped image for OCR and perform OCR
+    ocr_img_path = process_and_save_cropped_image(rgb_cropped_image, data_cropped_path)
+    result = ocr.ocr(ocr_img_path, cls=True)
+
+    # Process OCR results
+    df, integer_list = process_ocr_results(result)
+    " ".join(df["Text"].values)
+
+    # Generate raw and mapped DataFrames
+    new_df, updated_df, mapped_df, row_lines = get_raw_dataframes(df, pdf_column_matrix)
+    mapped_df = add_dummy_rows(mapped_df)
+    row_headers = extract_row_headers(updated_df, mapped_df)
+
+    return (
+        new_df,
+        updated_df,
+        mapped_df,
+        row_lines,
+        row_headers,
+        pdf_column_header_matrix,
+    )
+
+
+def process_numeric_table(image_path, pdf_column_header_matrix, row_lines, mapped_df):
+    """
+    Process a table image to detect horizontal lines, find the closest header, and map rows to headers.
+
+    Parameters:
+    image_path (str): Path to the cropped table image.
+    pdf_column_header_matrix (list): 2D list or array containing the coordinates of the headers in the PDF.
+    row_lines (list): List of y-coordinates representing the row lines in the image.
+    mapped_df (DataFrame): DataFrame that has been mapped but needs to be combined with rows to header.
+
+    Returns:
+    DataFrame: A new DataFrame where rows are combined with the detected header.
+    """
+    # Detect horizontal lines in the image
+    CV_y_coordinates = detect_horizontal_lines(image_path)
+
+    # Find the closest header y-coordinate using euclidean distance
+    header_y_coordinate = find_closest(CV_y_coordinates, pdf_column_header_matrix[0][3])
+
+    # Count how many row lines are before the header
+    count = sum(1 for i in row_lines if i <= (header_y_coordinate + 1))
+
+    # Combine the rows with the corresponding header
+    new_mapped_df = combine_rows_to_header(mapped_df, count)
+
+    # Create a copy of the new mapped DataFrame
+    new_main_df = new_mapped_df.copy()
+
+    return new_main_df
+
+
+def create_mapped_df(new_df, mapped_df, row_headers):
+    """
+    Provide mapped dataframes and returns the updated dataframes.
+
+    Parameters:
+    new_df (pd.DataFrame): A new dataframe used to create mapped views.
+    mapped_df (pd.DataFrame): The original dataframe with existing row headers.
+    row_headers (list): A list of new row headers to replace in the dataframes.
+
+    Returns:
+    tuple: A tuple containing the updated mapped_df, mapped_df_x, and mapped_df_y.
+    """
+    mapped_df_x, mapped_df_y = create_mapped_views(new_df)
+    mapped_df = replace_row_header(mapped_df, row_headers)
+    mapped_df_x = replace_row_header(mapped_df_x, row_headers)
+    mapped_df_y = replace_row_header(mapped_df_y, row_headers)
+    return mapped_df, mapped_df_x, mapped_df_y
+
+
+def analyze_image_y_coordinates(image_path, pdf_column_header_matrix, row_lines):
+    """
+    Analyzes the y-coordinates of detected horizontal lines in the image and determines the closest header
+    y-coordinate using Euclidean distance. It also counts the number of row lines above or near the determined
+    header coordinate.
+
+    Parameters:
+    image_path (str): The path to the image file for processing.
+    pdf_column_header_matrix (list): A matrix containing the y-coordinates of column headers from a PDF.
+    row_lines (list): A list of y-coordinates representing horizontal row lines.
+
+    Returns:
+    tuple: A tuple containing the list of detected y-coordinates (CV_y_coordinates) and the count of row lines
+           above or near the determined header coordinate.
+    """
+    CV_y_coordinates = detect_horizontal_lines(image_path)
+
+    header_y_coordinate = find_closest(CV_y_coordinates, pdf_column_header_matrix[0][3])
+
+    if (pdf_column_header_matrix[0][3] - header_y_coordinate) > 30:
+        new_header_y_coordinate = pdf_column_header_matrix[0][3]
+    else:
+        new_header_y_coordinate = header_y_coordinate
+    count = sum(1 for i in row_lines if i <= (new_header_y_coordinate + 1))
+    return CV_y_coordinates, count
+
+
+def update_mapped_df(mapped_df, mapped_df_x, mapped_df_y, count):
+    """
+    Updates the provided dataframes by combining rows up to a specified count
+    into headers and replacing empty column names with default values.
+
+    Parameters:
+    mapped_df (pd.DataFrame): The original dataframe with rows to be combined into headers.
+    mapped_df_x (pd.DataFrame): A secondary dataframe with rows to be combined into headers.
+    mapped_df_y (pd.DataFrame): Another dataframe with rows to be combined into headers.
+    count (int): The number of rows to combine into the header.
+
+    Returns:
+    tuple: A tuple containing the updated dataframes (new_mapped_df, new_mapped_df_x, new_mapped_df_y).
+    """
+
+    new_mapped_df = combine_rows_to_header(mapped_df, count)
+    new_mapped_df = replace_empty_column_names(new_mapped_df)
+    new_mapped_df_x = combine_rows_to_header(mapped_df_x, count)
+    new_mapped_df_x = replace_empty_column_names(new_mapped_df_x)
+    new_mapped_df_y = combine_rows_to_header(mapped_df_y, count)
+    new_mapped_df_y = replace_empty_column_names(new_mapped_df_y)
+    return new_mapped_df, new_mapped_df_x, new_mapped_df_y
+
+
+def process_grouped_dataframe(CV_y_coordinates, new_row_lines, new_mapped_df):
+    """
+    Groups rows in the dataframe based on vertical coordinates and performs aggregations.
+
+    Parameters:
+    CV_y_coordinates (list): A list of y-coordinates representing detected lines in the image.
+    new_row_lines (list): A list of y-coordinates for new row lines to assist in grouping.
+    new_mapped_df (pd.DataFrame): The dataframe to be processed and grouped.
+
+    Returns:
+    tuple: A tuple containing:
+        - new_main_df (pd.DataFrame): The dataframe with grouped and aggregated data.
+        - group_dict (dict): A dictionary mapping group IDs to the respective row indices.
+    """
+    group_dict = group_by_main_line(CV_y_coordinates, new_row_lines)
+    df = new_mapped_df.copy()
+    # Create a new column for group ID based on index
+    group_ids = {idx: group for group, indices in group_dict.items() for idx in indices}
+    df["GroupID"] = df.index.map(group_ids)
+    # Exclude the GroupID from aggregation
+    aggregations = get_aggregations(df.drop("GroupID", axis=1))
+    # Group by the 'GroupID' and aggregate
+    new_main_df = df.groupby("GroupID").agg(aggregations).reset_index(drop=True)
+    # Apply the formatting function to every column in the dataframe
+    for column in new_main_df.columns:
+        new_main_df[column] = new_main_df[column].apply(format_space_text)
+    return new_main_df, group_dict
+
+
+def process_dataframe_intervals(result_df, row_headers, count):
+    """
+    Processes the dataframe by identifying intervals of non-blank cells, merging rows based on those intervals,
+    and updating row headers accordingly.
+
+    Parameters:
+    result_df (pd.DataFrame): The dataframe to be processed.
+
+    Returns:
+    pd.DataFrame: The processed dataframe with merged rows and updated headers.
+    """
+    blank_list = count_non_blank_cells(result_df)
+    intervals = new_find_intervals_max_positions(blank_list, threshold=2)
+    new_main_df = merge_rows_generalized(result_df, intervals)
+    for column in new_main_df.columns:
+        new_main_df[column] = new_main_df[column].apply(format_space_text)
+    new_main_df = update_row_headers_with_intervals(
+        new_main_df, intervals, row_headers, count_increment=(count + 1)
+    )
+    return new_main_df
+
+
+def df_to_pickle(new_main_df, temp_output_folder, page_num, maxi, rotated):
+    """
+    Saves the given DataFrame as a pickle file in the specified output folder. The file name is based on
+    the page number, index of the table, and whether the table is rotated.
+
+    Parameters:
+    new_main_df (pd.DataFrame): The DataFrame to be saved.
+    temp_output_folder (str): Path to the folder where the pickle file will be saved.
+    page_num (int): The page number where the table was extracted from.
+    maxi (int): The index of the table on the current page.
+    rotated (str): A flag ("yes" or "no") indicating whether the table was rotated.
+
+    Returns:
+    None: The function saves the DataFrame as a pickle file.
+    """
+    if rotated == "yes":
+        new_main_df.to_pickle(
+            temp_output_folder
+            + "df_oriented"
+            + "_"
+            + str(page_num)
+            + "_"
+            + str(maxi)
+            + ".pkl"
         )
-        return response.json()
+    else:
+        new_main_df.to_pickle(
+            temp_output_folder + "df" + "_" + str(page_num) + "_" + str(maxi) + ".pkl"
+        )
+
+
+def process_non_numeric_table(
+    image_path,
+    pdf_column_header_matrix,
+    row_lines,
+    new_df,
+    mapped_df,
+    row_headers,
+    temp_output_folder,
+    page_num,
+    maxi,
+    rotated,
+):
+    """
+    Processes a non-numeric table, analyzing its structure, applying transformations to mapped data,
+    and saving the result based on certain conditions (uppercase percentage, grouping, etc.).
+
+    Parameters:
+    image_path (str): Path to the image of the table.
+    pdf_column_header_matrix (list): The matrix containing the column headers of the table.
+    row_lines (list): List of y-coordinates representing the row lines in the table.
+    new_df (pd.DataFrame): The DataFrame containing the original data for processing.
+    mapped_df (pd.DataFrame): The mapped DataFrame representing the extracted table structure.
+    row_headers (list): List of row headers for the table.
+    temp_output_folder (str): Path to the temporary output folder for saving results.
+    page_num (int): The page number where the table is located.
+    maxi (int): The index of the current table being processed.
+    rotated (str): Indicator whether the table is rotated ("yes" or "no").
+
+    Returns:
+    None: The function saves the processed DataFrame as a pickle file.
+    """
+    CV_y_coordinates, count = analyze_image_y_coordinates(
+        image_path, pdf_column_header_matrix, row_lines
+    )
+    mapped_df, mapped_df_x, mapped_df_y = create_mapped_df(
+        new_df, mapped_df, row_headers
+    )
+    new_mapped_df, new_mapped_df_x, new_mapped_df_y = update_mapped_df(
+        mapped_df, mapped_df_x, mapped_df_y, count
+    )
+    new_row_lines = [x + 3 for x in row_lines[count:]]
+    height = get_image_height(image_path)
+    result = check_within_percentage_range(height, CV_y_coordinates)
+    if len(new_row_lines) <= 5:
+        result = "no"
+    if result == "yes":
+        new_main_df, group_dict = process_grouped_dataframe(
+            CV_y_coordinates, new_row_lines, new_mapped_df
+        )
+        new_main_df = update_row_headers_result(
+            new_main_df, group_dict, row_headers, count_increment=(count + 1)
+        )
+        df_to_pickle(new_main_df, temp_output_folder, page_num, maxi, rotated)
+    else:
+        result_df = apply_and_join(new_mapped_df, new_mapped_df_x, new_mapped_df_y)
+        filtered_df = result_df[~result_df.apply(is_row_empty, axis=1)]
+        result_uppercase = check_uppercase_percentage(filtered_df)
+        if result_uppercase == "Yes":
+            new_main_df = filtered_df.copy()
+            count_plus_one = count + 1
+            new_main_df = insert_row_headers_result_uppercase(
+                new_main_df, row_headers, count_plus_one
+            )
+            df_to_pickle(new_main_df, temp_output_folder, page_num, maxi, rotated)
+        else:
+            new_main_df = process_dataframe_intervals(result_df, row_headers, count)
+            df_to_pickle(new_main_df, temp_output_folder, page_num, maxi, rotated)
 
 
 def extract_table(
@@ -1811,15 +2390,36 @@ def extract_table(
     crop_padding,
     data_cropped_path,
 ):
+    """
+    Processes pages containing tables from a document, identifying and processing numeric and non-numeric tables.
+    Handles rotated, OCR-mixed tables, and object detection-based tables. Outputs the processed tables
+    into specified folders based on their characteristics.
+
+    Parameters:
+    Pages_Contains_Tables (list): List of page numbers that are known to contain tables.
+    ocr (object): OCR model used for text extraction.
+    evaluate_dict (dict): Dictionary used for evaluation.
+    main_evaluate_dict (dict): Main evaluation dictionary.
+    temp_output_folder (str): Path to the temporary output folder.
+    output_folder_image_path (str): Path where images of the document pages are stored.
+    doc (object): Document object representing the PDF or other format.
+    model (object): Object detection model used for identifying objects in the document.
+    structure_model (object): Model used for processing the structure of the table.
+    device (str): Device (CPU or GPU) to be used for model inference.
+    detection_class_thresholds (dict): Thresholds used for detecting specific classes (e.g., tables).
+    crop_padding (int): Padding to apply when cropping detected table regions.
+    data_cropped_path (str): Path where cropped table images are stored.
+
+    Returns:
+    None: The function saves the processed data in files, logging the progress and errors.
+    """
     for m in Pages_Contains_Tables:
-        print("-" * 50)
-        print(f"Extracting tables for page number: {m}")
-        print("-" * 50)
-        # main_page_number = m
         page_num = m
         file_path = output_folder_image_path + f"/page_{page_num}.png"
 
         page = doc.load_page(page_num)
+        logging.info(f"Processing page {page_num}.")
+
         (
             tokens,
             xo_column_lines,
@@ -1839,40 +2439,28 @@ def extract_table(
             x1_spanning_header_lines,
             y1_spanning_header_lines,
         ) = ([] for _ in range(17))
+
         image = get_image(file_path)
         img_width, img_height = get_image_size(file_path)
 
-        detection_transform, structure_transform = get_transform()
+        (
+            page_table_rotated,
+            page_mix_ocr,
+            page_rotation,
+            page_searchable,
+            objects,
+            structure_transform,
+        ) = process_page_characteristics(image, model, device, page)
 
-        objects = get_objects(image, model, detection_transform, device)
-
-        # print(objects)
-        if objects:
-            # print(objects[0]['label']) ### if objects[0]['label'] == 'table rotated': then paddle ocr
-            page_table_rotated = objects[0]["label"] == "table rotated"
-        else:
-            page_table_rotated = False
-
-        page_text = page.get_text()
-        bbox_log = page.get_bboxlog()
-
-        # Check if any bbox log has 'ignore-text'
-        page_mix_ocr = any("ignore-text" in bbox[0] for bbox in bbox_log)
-        # Get page rotation
-        page_rotation = page.rotation
-
-        # Check if page text is searchable
-        page_searchable = page_text.strip()
-
-        objects = sorted(objects, key=lambda x: x["bbox"][1])
-
-        # Create if condition using 'or' to combine multiple conditions
         if (
             page_mix_ocr
             or page_rotation != 0
             or not page_searchable
             or page_table_rotated
         ):
+            logging.info(
+                f"Page {page_num} has a rotated or OCR-mixed table. Processing accordingly."
+            )
             try:
                 tables_crops = objects_to_crops(
                     image,
@@ -1881,287 +2469,68 @@ def extract_table(
                     detection_class_thresholds,
                     padding=crop_padding,
                 )
-                cells = []
-
                 for i in range(len(tables_crops)):
                     maxi = i
-                    cropped_table = tables_crops[i]["image"]
                     (
-                        process_table_image,
-                        rgb_cropped_image,
-                    ) = oriented_process_cropped_table_image(
-                        cropped_table,
+                        new_df,
+                        updated_df,
+                        mapped_df,
+                        row_lines,
+                        row_headers,
+                        pdf_column_header_matrix,
+                    ) = process_table_image(
+                        tables_crops,
+                        i,
                         device,
                         structure_transform,
                         structure_model,
                         outputs_to_objects,
-                    )
-                    cells.append(process_table_image)
-                    (
-                        table_columns_only,
-                        table_columns_header_only,
-                        table_columns_row_header_only,
-                        table_columns_spanning_only_sorted,
-                    ) = process_table_cells(process_table_image)
-                    (
-                        pdf_column_matrix,
-                        pdf_column_header_matrix,
-                        pdf_row_header_matrix,
-                        pdf_spanning_header_matrix,
-                    ) = oriented_adjust_bounding_boxes(
-                        table_columns_only,
-                        table_columns_header_only,
-                        table_columns_row_header_only,
-                        table_columns_spanning_only_sorted,
-                        objects[i]["bbox"],
+                        ocr,
                         crop_padding,
+                        data_cropped_path,
+                        objects,
                     )
-
-                    ocr_img_path = process_and_save_cropped_image(
-                        rgb_cropped_image, data_cropped_path
-                    )
-
-                    """
-                    classifier = HeaderClassifier(api_key, ocr_img_path)
-                    result = classifier.classify_image()
-                    print(result)
-                    Header_classifier['df' + "_" + str(page_num) + "_" + str(maxi)]  = result['choices'][0]['message']['content']
-                    print(Header_classifier)
-                    """
-                    result = ocr.ocr(ocr_img_path, cls=True)
-                    df, integer_list = process_ocr_results(
-                        result, x_range=None, y_range=None
-                    )
-                    " ".join(df["Text"].values)
-                    # df.to_csv("/content/csvs" + f"/page_{page_num}_{maxi}.csv", index=False)
-
-                    new_df, updated_df, mapped_df, row_lines = get_raw_dataframes(
-                        df, pdf_column_matrix
-                    )
-                    mapped_df = add_dummy_rows(mapped_df)
-
-                    evaluate_dict[
-                        "df_oriented" + "_" + str(page_num) + "_" + str(maxi)
-                    ] = len(mapped_df)
-
-                    row_headers = extract_row_headers(updated_df, mapped_df)
-
-                    # Identify the type of the table
                     table_type = identify_table_type(mapped_df)
-
                     if table_type == "Numeric":
-                        # Example usage:
+                        logging.info(
+                            f"Numeric table found on page {page_num}, table {i}."
+                        )
                         image_path = f"{data_cropped_path}/cropped_images/cropped_table_image.png"
-
-                        CV_y_coordinates = detect_horizontal_lines(image_path)
-
-                        # header_y_coordinate = largest_less_than(CV_y_coordinates, pdf_column_header_matrix[0][3]) ## use numbers less than
-                        header_y_coordinate = find_closest(
-                            CV_y_coordinates, pdf_column_header_matrix[0][3]
-                        )  ### use euclidean distance here.
-                        count = sum(
-                            1 for i in row_lines if i <= (header_y_coordinate + 1)
+                        new_main_df = process_numeric_table(
+                            image_path, pdf_column_header_matrix, row_lines, mapped_df
                         )
-
-                        new_mapped_df = combine_rows_to_header(mapped_df, count)
-                        new_main_df = (
-                            new_mapped_df.copy()
-                        )  ## or you may also use the old parser.
-                        new_main_df.to_pickle(
-                            temp_output_folder
-                            + "df_oriented"
-                            + "_"
-                            + str(page_num)
-                            + "_"
-                            + str(maxi)
-                            + ".pkl"
+                        df_to_pickle(
+                            new_main_df,
+                            temp_output_folder,
+                            page_num,
+                            maxi,
+                            rotated="yes",
                         )
-
-                        main_evaluate_dict[
-                            "df_oriented" + "_" + str(page_num) + "_" + str(maxi)
-                        ] = len(new_main_df)
-                        ### Need to add a header merge function here.
-
                     else:
-                        mapped_df_x, mapped_df_y = create_mapped_views(new_df)
-
-                        mapped_df = replace_row_header(mapped_df, row_headers)
-                        mapped_df_x = replace_row_header(mapped_df_x, row_headers)
-                        mapped_df_y = replace_row_header(mapped_df_y, row_headers)
-
-                        # Example usage:
-                        image_path = f"{data_cropped_path}/cropped_images/cropped_table_image.png"
-                        CV_y_coordinates = detect_horizontal_lines(image_path)
-
-                        # header_y_coordinate = largest_less_than(CV_y_coordinates, pdf_column_header_matrix[0][3]) ## use numbers less than
-                        header_y_coordinate = find_closest(
-                            CV_y_coordinates, pdf_column_header_matrix[0][3]
-                        )  ### use euclidean distance here.
-                        if (pdf_column_header_matrix[0][3] - header_y_coordinate) > 30:
-                            new_header_y_coordinate = pdf_column_header_matrix[0][3]
-                        else:
-                            new_header_y_coordinate = header_y_coordinate
-                        count = sum(
-                            1 for i in row_lines if i <= (new_header_y_coordinate + 1)
+                        logging.info(
+                            f"Non-numeric table found on page {page_num}, table {i}."
                         )
-
-                        new_mapped_df = combine_rows_to_header(mapped_df, count)
-                        new_mapped_df = replace_empty_column_names(
-                            new_mapped_df
-                        )  # Replace empty column names with placeholders
-                        new_mapped_df_x = combine_rows_to_header(mapped_df_x, count)
-                        new_mapped_df_x = replace_empty_column_names(
-                            new_mapped_df_x
-                        )  # Replace empty column names with placeholders
-                        new_mapped_df_y = combine_rows_to_header(mapped_df_y, count)
-                        new_mapped_df_y = replace_empty_column_names(
-                            new_mapped_df_y
-                        )  # Replace empty column names with placeholders
-
-                        new_row_lines = row_lines[
-                            count:
-                        ]  # not considering header row lines
-                        new_row_lines = [x + 3 for x in new_row_lines]
-
-                        height = get_image_height(image_path)
-
-                        # PRECONDITION TO CHECK TO APPLY FOLDING OPERATION THERE ARE TWO WAYS: {lines} {identation}
-
-                        result = check_within_percentage_range(height, CV_y_coordinates)
-
-                        if len(new_row_lines) <= 5:
-                            result = "no"
-
-                        if result == "yes":
-                            group_dict = group_by_main_line(
-                                CV_y_coordinates, new_row_lines
-                            )
-                            df = new_mapped_df.copy()
-                            # Create a new column for group ID based on index
-                            group_ids = {
-                                idx: group
-                                for group, indices in group_dict.items()
-                                for idx in indices
-                            }
-                            df["GroupID"] = df.index.map(group_ids)
-                            # Exclude the GroupID from aggregation
-                            aggregations = get_aggregations(df.drop("GroupID", axis=1))
-                            # Group by the 'GroupID' and aggregate
-                            new_main_df = (
-                                df.groupby("GroupID")
-                                .agg(aggregations)
-                                .reset_index(drop=True)
-                            )
-                            # Apply the formatting function to every column in the dataframe
-                            for column in new_main_df.columns:
-                                new_main_df[column] = new_main_df[column].apply(
-                                    format_space_text
-                                )
-
-                            # Insert Row Headers
-                            new_main_df = update_row_headers_result(
-                                new_main_df,
-                                group_dict,
-                                row_headers,
-                                count_increment=(count + 1),
-                            )
-
-                            new_main_df.to_pickle(
-                                temp_output_folder
-                                + "df_oriented"
-                                + "_"
-                                + str(page_num)
-                                + "_"
-                                + str(maxi)
-                                + ".pkl"
-                            )
-
-                            main_evaluate_dict[
-                                "df_oriented" + "_" + str(page_num) + "_" + str(maxi)
-                            ] = len(new_main_df)
-
-                        else:
-                            result_df = apply_and_join(
-                                new_mapped_df, new_mapped_df_x, new_mapped_df_y
-                            )
-
-                            # Filter out rows that are completely empty
-                            filtered_df = result_df[
-                                ~result_df.apply(is_row_empty, axis=1)
-                            ]
-
-                            # Check if any column meets the criteria
-                            result_uppercase = check_uppercase_percentage(filtered_df)
-
-                            if result_uppercase == "Yes":
-                                new_main_df = filtered_df.copy()
-                                count_plus_one = count + 1
-                                new_main_df = insert_row_headers_result_uppercase(
-                                    new_main_df, row_headers, count_plus_one
-                                )
-                                new_main_df.to_pickle(
-                                    temp_output_folder
-                                    + "df_oriented"
-                                    + "_"
-                                    + str(page_num)
-                                    + "_"
-                                    + str(maxi)
-                                    + ".pkl"
-                                )
-
-                                main_evaluate_dict[
-                                    "df_oriented"
-                                    + "_"
-                                    + str(page_num)
-                                    + "_"
-                                    + str(maxi)
-                                ] = len(new_main_df)
-
-                            else:
-                                blank_list = count_non_blank_cells(result_df)
-
-                                intervals = new_find_intervals_max_positions(
-                                    blank_list, threshold=2
-                                )
-
-                                new_main_df = merge_rows_generalized(
-                                    result_df, intervals
-                                )
-                                # Apply the formatting function to every column in the dataframe
-                                for column in new_main_df.columns:
-                                    new_main_df[column] = new_main_df[column].apply(
-                                        format_space_text
-                                    )
-                                # Insert Row Headers
-                                new_main_df = update_row_headers_with_intervals(
-                                    new_main_df,
-                                    intervals,
-                                    row_headers,
-                                    count_increment=(count + 1),
-                                )
-                                new_main_df.to_pickle(
-                                    temp_output_folder
-                                    + "df_oriented"
-                                    + "_"
-                                    + str(page_num)
-                                    + "_"
-                                    + str(maxi)
-                                    + ".pkl"
-                                )
-
-                                main_evaluate_dict[
-                                    "df_oriented"
-                                    + "_"
-                                    + str(page_num)
-                                    + "_"
-                                    + str(maxi)
-                                ] = len(new_main_df)
-
-            except:
-                pass
+                        image_path = f"{data_cropped_path}/cropped_images/cropped_table_image.png"
+                        process_non_numeric_table(
+                            image_path,
+                            pdf_column_header_matrix,
+                            row_lines,
+                            new_df,
+                            mapped_df,
+                            row_headers,
+                            temp_output_folder,
+                            page_num,
+                            maxi,
+                            rotated="yes",
+                        )
+            except Exception as e:
+                logging.error(
+                    f"Detected Rotated Table not processed on page {page_num}: {e}"
+                )
 
         elif objects:
             if objects[0]["label"] == "table":
+                logging.info(f"Detected table on page {page_num}.")
                 try:
                     tables_crops = objects_to_crops(
                         image,
@@ -2170,288 +2539,68 @@ def extract_table(
                         detection_class_thresholds,
                         padding=crop_padding,
                     )
-                    cells = []
-
                     for i in range(len(tables_crops)):
                         maxi = i
-                        cropped_table = tables_crops[i]["image"]
                         (
-                            process_table_image,
-                            rgb_cropped_image,
-                        ) = oriented_process_cropped_table_image(
-                            cropped_table,
+                            new_df,
+                            updated_df,
+                            mapped_df,
+                            row_lines,
+                            row_headers,
+                            pdf_column_header_matrix,
+                        ) = process_table_image(
+                            tables_crops,
+                            i,
                             device,
                             structure_transform,
                             structure_model,
                             outputs_to_objects,
-                        )
-                        cells.append(process_table_image)
-                        (
-                            table_columns_only,
-                            table_columns_header_only,
-                            table_columns_row_header_only,
-                            table_columns_spanning_only_sorted,
-                        ) = process_table_cells(process_table_image)
-                        (
-                            pdf_column_matrix,
-                            pdf_column_header_matrix,
-                            pdf_row_header_matrix,
-                            pdf_spanning_header_matrix,
-                        ) = oriented_adjust_bounding_boxes(
-                            table_columns_only,
-                            table_columns_header_only,
-                            table_columns_row_header_only,
-                            table_columns_spanning_only_sorted,
-                            objects[i]["bbox"],
+                            ocr,
                             crop_padding,
+                            data_cropped_path,
+                            objects,
                         )
-
-                        ocr_img_path = process_and_save_cropped_image(
-                            rgb_cropped_image, data_cropped_path
-                        )
-
-                        """
-                        classifier = HeaderClassifier(api_key, ocr_img_path)
-                        result = classifier.classify_image()
-                        print(result)
-                        Header_classifier['df' + "_" + str(page_num) + "_" + str(maxi)]  = result['choices'][0]['message']['content']
-                        print(Header_classifier)
-
-                        """
-
-                        result = ocr.ocr(ocr_img_path, cls=True)
-                        df, integer_list = process_ocr_results(
-                            result, x_range=None, y_range=None
-                        )
-                        " ".join(df["Text"].values)
-                        # df.to_csv("/content/csvs" + f"/page_{page_num}_{maxi}.csv", index=False)
-
-                        new_df, updated_df, mapped_df, row_lines = get_raw_dataframes(
-                            df, pdf_column_matrix
-                        )
-                        mapped_df = add_dummy_rows(mapped_df)
-                        evaluate_dict[
-                            "df" + "_" + str(page_num) + "_" + str(maxi)
-                        ] = len(mapped_df)
-
-                        row_headers = extract_row_headers(updated_df, mapped_df)
-
-                        # Identify the type of the table
                         table_type = identify_table_type(mapped_df)
-
                         if table_type == "Numeric":
-                            # Example usage:
+                            logging.info(
+                                f"Numeric table found on page {page_num}, table {i}."
+                            )
                             image_path = f"{data_cropped_path}/cropped_images/cropped_table_image.png"
-                            CV_y_coordinates = detect_horizontal_lines(image_path)
-
-                            # header_y_coordinate = largest_less_than(CV_y_coordinates, pdf_column_header_matrix[0][3]) ## use numbers less than
-                            header_y_coordinate = find_closest(
-                                CV_y_coordinates, pdf_column_header_matrix[0][3]
-                            )  ### use euclidean distance here.
-                            count = sum(
-                                1 for i in row_lines if i <= (header_y_coordinate + 1)
+                            new_main_df = process_numeric_table(
+                                image_path,
+                                pdf_column_header_matrix,
+                                row_lines,
+                                mapped_df,
                             )
-
-                            new_mapped_df = combine_rows_to_header(mapped_df, count)
-                            new_main_df = (
-                                new_mapped_df.copy()
-                            )  ## or you may also use the old parser.
-                            new_main_df.to_pickle(
-                                temp_output_folder
-                                + "df"
-                                + "_"
-                                + str(page_num)
-                                + "_"
-                                + str(maxi)
-                                + ".pkl"
+                            df_to_pickle(
+                                new_main_df,
+                                temp_output_folder,
+                                page_num,
+                                maxi,
+                                rotated="no",
                             )
-
-                            main_evaluate_dict[
-                                "df" + "_" + str(page_num) + "_" + str(maxi)
-                            ] = len(new_main_df)
-
-                            ### Need to add a header merge function here.
-
                         else:
-                            mapped_df_x, mapped_df_y = create_mapped_views(new_df)
-
-                            mapped_df = replace_row_header(mapped_df, row_headers)
-                            mapped_df_x = replace_row_header(mapped_df_x, row_headers)
-                            mapped_df_y = replace_row_header(mapped_df_y, row_headers)
-
-                            # Example usage:
+                            logging.info(
+                                f"Non-numeric table found on page {page_num}, table {i}."
+                            )
                             image_path = f"{data_cropped_path}/cropped_images/cropped_table_image.png"
-                            CV_y_coordinates = detect_horizontal_lines(image_path)
-
-                            # header_y_coordinate = largest_less_than(CV_y_coordinates, pdf_column_header_matrix[0][3]) ## use numbers less than
-
-                            header_y_coordinate = find_closest(
-                                CV_y_coordinates, pdf_column_header_matrix[0][3]
-                            )  ### use euclidean distance here.
-                            if (
-                                pdf_column_header_matrix[0][3] - header_y_coordinate
-                            ) > 30:
-                                new_header_y_coordinate = pdf_column_header_matrix[0][3]
-                            else:
-                                new_header_y_coordinate = header_y_coordinate
-                            count = sum(
-                                1
-                                for i in row_lines
-                                if i <= (new_header_y_coordinate + 1)
+                            process_non_numeric_table(
+                                image_path,
+                                pdf_column_header_matrix,
+                                row_lines,
+                                new_df,
+                                mapped_df,
+                                row_headers,
+                                temp_output_folder,
+                                page_num,
+                                maxi,
+                                rotated="no",
                             )
-
-                            new_mapped_df = combine_rows_to_header(mapped_df, count)
-                            new_mapped_df = replace_empty_column_names(
-                                new_mapped_df
-                            )  # Replace empty column names with placeholders
-                            new_mapped_df_x = combine_rows_to_header(mapped_df_x, count)
-                            new_mapped_df_x = replace_empty_column_names(
-                                new_mapped_df_x
-                            )  # Replace empty column names with placeholders
-                            new_mapped_df_y = combine_rows_to_header(mapped_df_y, count)
-                            new_mapped_df_y = replace_empty_column_names(
-                                new_mapped_df_y
-                            )  # Replace empty column names with placeholders
-
-                            new_row_lines = row_lines[
-                                count:
-                            ]  # not considering header row lines
-                            new_row_lines = [x + 3 for x in new_row_lines]
-
-                            height = get_image_height(image_path)
-
-                            # PRECONDITION TO CHECK TO APPLY FOLDING OPERATION THERE ARE TWO WAYS: {lines} {identation}
-
-                            result = check_within_percentage_range(
-                                height, CV_y_coordinates
-                            )
-
-                            if len(new_row_lines) <= 5:
-                                result = "no"
-
-                            if result == "yes":
-                                group_dict = group_by_main_line(
-                                    CV_y_coordinates, new_row_lines
-                                )
-                                df = new_mapped_df.copy()
-                                # Create a new column for group ID based on index
-                                group_ids = {
-                                    idx: group
-                                    for group, indices in group_dict.items()
-                                    for idx in indices
-                                }
-                                df["GroupID"] = df.index.map(group_ids)
-                                # Exclude the GroupID from aggregation
-                                aggregations = get_aggregations(
-                                    df.drop("GroupID", axis=1)
-                                )
-                                # Group by the 'GroupID' and aggregate
-                                new_main_df = (
-                                    df.groupby("GroupID")
-                                    .agg(aggregations)
-                                    .reset_index(drop=True)
-                                )
-                                # Apply the formatting function to every column in the dataframe
-                                for column in new_main_df.columns:
-                                    new_main_df[column] = new_main_df[column].apply(
-                                        format_space_text
-                                    )
-
-                                # Insert Row Headers
-                                new_main_df = update_row_headers_result(
-                                    new_main_df,
-                                    group_dict,
-                                    row_headers,
-                                    count_increment=(count + 1),
-                                )
-
-                                new_main_df.to_pickle(
-                                    temp_output_folder
-                                    + "df"
-                                    + "_"
-                                    + str(page_num)
-                                    + "_"
-                                    + str(maxi)
-                                    + ".pkl"
-                                )
-
-                                main_evaluate_dict[
-                                    "df" + "_" + str(page_num) + "_" + str(maxi)
-                                ] = len(new_main_df)
-
-                            else:
-                                result_df = apply_and_join(
-                                    new_mapped_df, new_mapped_df_x, new_mapped_df_y
-                                )
-
-                                # Filter out rows that are completely empty
-                                filtered_df = result_df[
-                                    ~result_df.apply(is_row_empty, axis=1)
-                                ]
-
-                                # Check if any column meets the criteria
-                                result_uppercase = check_uppercase_percentage(
-                                    filtered_df
-                                )
-
-                                if result_uppercase == "Yes":
-                                    new_main_df = filtered_df.copy()
-                                    count_plus_one = count + 1
-                                    new_main_df = insert_row_headers_result_uppercase(
-                                        new_main_df, row_headers, count_plus_one
-                                    )
-                                    new_main_df.to_pickle(
-                                        temp_output_folder
-                                        + "df"
-                                        + "_"
-                                        + str(page_num)
-                                        + "_"
-                                        + str(maxi)
-                                        + ".pkl"
-                                    )
-
-                                    main_evaluate_dict[
-                                        "df" + "_" + str(page_num) + "_" + str(maxi)
-                                    ] = len(new_main_df)
-
-                                else:
-                                    blank_list = count_non_blank_cells(result_df)
-                                    intervals = new_find_intervals_max_positions(
-                                        blank_list,
-                                        threshold=round((max(blank_list) + 0.01) / 2),
-                                    )
-
-                                    new_main_df = merge_rows_generalized(
-                                        result_df, intervals
-                                    )
-                                    # Apply the formatting function to every column in the dataframe
-                                    for column in new_main_df.columns:
-                                        new_main_df[column] = new_main_df[column].apply(
-                                            format_space_text
-                                        )
-                                    # Insert Row Headers
-                                    new_main_df = update_row_headers_with_intervals(
-                                        new_main_df,
-                                        intervals,
-                                        row_headers,
-                                        count_increment=(count + 1),
-                                    )
-                                    new_main_df.to_pickle(
-                                        temp_output_folder
-                                        + "df"
-                                        + "_"
-                                        + str(page_num)
-                                        + "_"
-                                        + str(maxi)
-                                        + ".pkl"
-                                    )
-
-                                    main_evaluate_dict[
-                                        "df" + "_" + str(page_num) + "_" + str(maxi)
-                                    ] = len(new_main_df)
-
-                except:
-                    pass
-
+                except Exception as e:
+                    logging.error(
+                        f"Detected Table not processed on page {page_num}: {e}"
+                    )
+            else:
+                logging.info(f"No table found on page {page_num}.")
         else:
-            print("no_table")
+            logging.info(f"No objects detected on page {page_num}.")
